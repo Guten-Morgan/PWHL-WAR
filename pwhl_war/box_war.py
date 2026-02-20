@@ -40,10 +40,10 @@ Method
        d_adj60      = pm60_resid − league_resid
        d_value60    = d_adj60 × defense_weight
 
-     defense_weight = 0.1: empirically optimised — team WAR vs GD Spearman
-     rs peaks at 0.9429 (p=0.005) for weights in [0.02, 0.14]; drops to
-     0.8286 above 0.15.  Residual +/- is noisier than xG and still
-     partially reflects team quality, so a light touch is appropriate.
+     defense_weight = 0.36: empirically optimised — pooled team WAR vs GD
+     Spearman across all three seasons (18 team-season observations).
+     rs=0.732 (p=0.0002) at 0.36; plateaus at 0.36-0.38.  Current 0.10
+     gives rs=0.529 (p=0.0165).  2025-26 partial season peaks at 0.94.
 
 4. Total value per 60:
      value60 = o_xG60 + d_value60
@@ -103,7 +103,7 @@ class XGWar:
     replacement_pct    : Percentile of value60 that defines replacement level.
     goals_per_win      : Override the Pythagorean estimate if desired.
     defense_weight     : Weight applied to the defensive component [0, 1].
-                         Default 0.1 (empirically optimised vs team GD).
+                         Default 0.36 (empirically optimised vs team GD).
                          0.0 = offense only.
     """
 
@@ -112,7 +112,7 @@ class XGWar:
         min_toi_min:     float = DEFAULT_MIN_TOI,
         replacement_pct: float = DEFAULT_REPLACEMENT,
         goals_per_win:   float | None = None,
-        defense_weight:  float = 0.1,
+        defense_weight:  float = 0.36,
     ):
         self.min_toi_min     = min_toi_min
         self.replacement_pct = replacement_pct
