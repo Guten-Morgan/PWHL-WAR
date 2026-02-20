@@ -24,19 +24,24 @@ Method
 
      Raw plus/minus conflates offense and defense — high scorers are on
      the ice for more goals, so they accumulate high +/- regardless of
-     defensive ability.  We remove the linear relationship with o_xG60
-     via OLS regression on qualified players:
+     defensive ability.  We first remove the linear relationship with
+     o_xG60 via OLS regression on qualified players:
 
-       pm60      = plusMinus / toi_min × 60
-       β         = OLS slope of pm60 ~ o_xG60 (qualified players)
+       pm60       = plusMinus / toi_min × 60
+       β          = OLS slope of pm60 ~ o_xG60 (qualified players)
        pm60_resid = pm60 − (α + β × o_xG60)
 
-     The residual captures "on-ice goal differential that can't be
-     explained by the player's own shot generation" — a proxy for
-     two-way/defensive value.
+     Team-quality adjustment:
+       Players on dominant teams have inflated pm60_resid regardless of
+       individual defensive ability (linemate effect).  We subtract each
+       team's TOI-weighted average residual so the metric reflects how
+       a player compares to their own teammates:
+
+       team_resid = TOI-weighted mean pm60_resid per team (qual. players)
+       pm60_resid = pm60_resid − team_resid
 
      League-mean adjustment:
-       league_resid = TOI-weighted average of pm60_resid
+       league_resid = TOI-weighted average of team-adjusted pm60_resid
        d_adj60      = pm60_resid − league_resid
        d_value60    = d_adj60 × defense_weight
 
@@ -178,7 +183,21 @@ class XGWar:
             reg.intercept_, reg.coef_[0],
         )
 
-        # League-mean-adjust the residuals
+        # Team-adjust: subtract each team's TOI-weighted mean residual.
+        # This removes team-quality contamination — players on dominant teams
+        # would otherwise get inflated dWAR simply for playing with good linemates.
+        # Qualified players only anchor the team means.
+        team_resid = (
+            df[qual_mask]
+            .groupby("Team")["pm60_resid"]
+            .apply(lambda g: np.average(g, weights=df.loc[g.index, "toi_min"].clip(lower=0.1)))
+        )
+        df["team_resid"] = df["Team"].map(team_resid).fillna(0)
+        df["pm60_resid"] = df["pm60_resid"] - df["team_resid"]
+        log.info("Team pm60_resid adjustments: %s",
+                 team_resid.round(3).to_dict())
+
+        # League-mean-adjust the (now team-adjusted) residuals
         league_resid = np.average(
             df.loc[qual_mask, "pm60_resid"],
             weights=df.loc[qual_mask, "toi_min"].clip(lower=0.1),
