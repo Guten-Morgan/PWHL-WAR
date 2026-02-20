@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Generated outputs (not source of truth)
+pwhl_war_results.csv
+pwhl_war_results_new.csv
+pwhl_war/data/war_*.csv
+pwhl_war_leaderboard.png
+pwhl_war_vs_toi.png
+
+# Downloaded data cache (re-fetched on demand)
+pwhl_war/data/raw/hockeystats_*.xlsx
+
+# Portfolio is a separate git repo
+portfolio/
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+Claude.md

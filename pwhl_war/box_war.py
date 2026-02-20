@@ -64,9 +64,10 @@ Method
      GAR  = oGAR + dGAR
 
 9. Wins Above Replacement:
-     oWAR = oGAR / goals_per_win
-     dWAR = dGAR / goals_per_win          (signed — positive = above repl)
-     WAR  = oWAR + |dWAR|                 (magnitude always additive)
+     oWAR  = oGAR / goals_per_win
+     dWAR  = dGAR / goals_per_win         (signed — positive = above repl)
+     WAR   = oWAR + dWAR                  (signed: good defense adds, bad subtracts)
+     war60 = WAR / toi_min × 60           (on-ice quality, ice-time-independent)
      goals_per_win = 2 × avg_goals_per_team_per_game  (Pythagorean)
 
 Limitations
@@ -89,7 +90,7 @@ from sklearn.linear_model import LinearRegression
 log = logging.getLogger(__name__)
 
 DEFAULT_MIN_TOI      = 50.0    # minutes; ~5 full games
-DEFAULT_REPLACEMENT  = 20.0    # percentile
+DEFAULT_REPLACEMENT  = 25.0    # percentile
 
 
 class XGWar:
@@ -231,9 +232,11 @@ class XGWar:
         # rating relative to replacement.  Total WAR uses |dWAR| so that
         # defensive contribution is always additive — the magnitude of a
         # player's defensive impact (good or bad) adds to their total value.
-        df["oWAR"] = (df["oGAR"] / gpw).round(3)
-        df["dWAR"] = (df["dGAR"] / gpw).round(3)
-        df["WAR"]  = (df["oWAR"] + df["dWAR"].abs()).round(3)
+        df["oWAR"]  = (df["oGAR"] / gpw).round(3)
+        df["dWAR"]  = (df["dGAR"] / gpw).round(3)
+        df["WAR"]   = (df["oWAR"] + df["dWAR"]).round(3)
+        # WAR per 60 minutes — quality per ice time, independent of role depth
+        df["war60"] = ((df["WAR"] / df["toi_min"].clip(lower=0.1)) * 60).round(3)
 
         # Attach context scalars
         df["o_replacement_val60"] = round(o_repl, 4)
@@ -266,7 +269,7 @@ class XGWar:
             # WAR components
             "oGAA", "dGAA", "GAA",
             "oGAR", "dGAR", "GAR",
-            "oWAR", "dWAR", "WAR",
+            "oWAR", "dWAR", "WAR", "war60",
             "o_replacement_val60", "d_replacement_val60", "goals_per_win",
         ] if c in df.columns]
         return df[cols]

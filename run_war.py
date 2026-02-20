@@ -66,8 +66,8 @@ def parse_args() -> argparse.Namespace:
                    help="Season to analyse (default: all seasons combined).")
     p.add_argument("--min-toi",         type=float, default=50.0,
                    help="Minimum TOI in minutes to qualify (default 50).")
-    p.add_argument("--replacement-pct", type=float, default=20.0,
-                   help="Percentile defining replacement level (default 20).")
+    p.add_argument("--replacement-pct", type=float, default=25.0,
+                   help="Percentile defining replacement level (default 25).")
     p.add_argument("--defense-weight",  type=float, default=0.1,
                    help="Weight on defensive component 0-1 (default 0.1).")
     p.add_argument("--refresh",  action="store_true",
