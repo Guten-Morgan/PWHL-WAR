@@ -1,30 +1,28 @@
 """
 run_combined_war.py
 -------------------
-Blended PWHL WAR: combines offensive signal from the box model with a
-60/40 weighted average of the two defensive signals.
+PWHL WAR: offensive signal from the box model, defensive signal from the
+Fenwick xGA model (goalie-agnostic shot-quality attribution).
 
-  combo_dWAR = 0.40 * box_dWAR  +  0.60 * xga_dWAR
-  combo_WAR  = oWAR (box)        +  combo_dWAR
+  dWAR      = xga_dWAR   (100% Fenwick — no pm60 component)
+  combo_WAR = oWAR (box) + dWAR
 
 Rationale
 ---------
   * Offensive WAR: box model's ixG60-based oWAR is used directly.
-    The xGA model's oWAR is nearly identical (Spearman r=0.918) so
-    either would work; box oWAR shows marginally better team-level signal.
+    The xGA model's oWAR is nearly identical (Spearman r=0.918); box oWAR
+    shows marginally better team-level GD signal so it is preferred.
 
-  * Defensive WAR: the two defensive signals are near-uncorrelated
-    (Spearman r=0.013), meaning they capture genuinely different aspects:
-      - box dWAR  (pm60 residual): actual on-ice goals, noisy but outcome-true
-      - xGA dWAR  (Fenwick TOI-share): shot quality suppressed, smoother signal
-    A 60/40 xGA/box blend sits comfortably inside the validated plateau
-    (r vs. team GD is flat from 28% to 72% box) while tilting toward
-    xGA anticipating that signal will strengthen with more season data.
+  * Defensive WAR: xGA dWAR only (Fenwick TOI-share attribution).
+    Year-to-year stability analysis confirmed that box pm60 dWAR is
+    essentially noise at the individual level (r=0.03-0.18, n.s.), while
+    xGA dWAR shows consistent, significant repeatability (r=0.21-0.28).
+    Both models are goalie-agnostic in design; pm60 leaks goaltender
+    variance into skater dWAR, which xGA avoids by construction.
 
   * Validation (2024-25, n=6 teams):
-      Box-only WAR        r_GD=0.600   r_Wpct=0.486
-      xGA-only dWAR blend r_GD=0.714   r_Wpct=0.371
-      60/40 blend         r_GD=0.714   r_Wpct=0.371  (inside plateau)
+      Box-only WAR            r_GD=0.600  YtY_WAR=0.316
+      xGA dWAR + box oWAR     r_GD=0.714  YtY_WAR=0.781
 
 Usage
 -----
@@ -55,13 +53,15 @@ logging.basicConfig(
 )
 log = logging.getLogger("run_combined_war")
 
-# Blend weights (must sum to 1)
-XGA_WEIGHT = 0.60
-BOX_WEIGHT = 0.40
+# Defensive signal: 100% xGA (Fenwick), 0% pm60 box
+# pm60 dWAR is near-random at individual level (YtY r=0.03-0.18);
+# xGA dWAR is goalie-agnostic and significantly more repeatable.
+XGA_WEIGHT = 1.00
+BOX_WEIGHT = 0.00
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="PWHL blended WAR (60% xGA / 40% box)")
+    p = argparse.ArgumentParser(description="PWHL WAR: box oWAR + xGA dWAR (goalie-agnostic)")
     p.add_argument("--box-csv", default="pwhl_war_results.csv")
     p.add_argument("--xga-csv", default="pwhl_xga_war_results.csv")
     p.add_argument("--output",  default="pwhl_combined_war_results.csv")
@@ -144,7 +144,7 @@ def main() -> None:
     log.info("Saved %d rows to %s", len(out), args.output)
 
     # ── Console table: top 15 across all seasons ──────────────────────────────
-    print(f"\nTop 15 (all seasons, 60% xGA / 40% box dWAR blend):")
+    print(f"\nTop 15 (all seasons, box oWAR + xGA dWAR):")
     top = out.nlargest(15, "WAR")[
         ["Season", "name", "team", "position", "GP", "oWAR", "box_dWAR", "xga_dWAR", "dWAR", "WAR"]
     ]
