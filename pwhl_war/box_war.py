@@ -164,8 +164,8 @@ class XGWar:
         game_data_df : from PWHLCsvLoader.get_game_data()
         schedule_df  : from PWHLCsvLoader.get_schedule() — for goals_per_win
         blocks_df    : DataFrame with columns [PlayerID, blocks] — season totals.
-                       For 2025-26, caller should scale blocks by (war_gp/api_gp)
-                       before passing.  If None, block component is skipped.
+                       Raw observed counts; model normalises to per-60 via TOI.
+                       If None, block component is skipped.
         """
         df = self._aggregate(game_data_df)
 

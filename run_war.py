@@ -325,15 +325,10 @@ def main() -> None:
         block_weight   = args.block_weight,
     )
 
-    # Load blocked-shots data (scaled for 2025-26 partial season)
+    # Load blocked-shots data (raw observed counts — no extrapolation).
     blocks = None
     if not args.no_blocks:
-        # Need a temporary run first to get GP counts for 2025-26 scaling.
-        # We fit without blocks to get the aggregated GP, then load blocks.
-        _tmp_model = XGWar(min_toi_min=1.0, defense_weight=0.0)
-        _tmp_model.fit(game_data, schedule_df=schedule)
-        _war_gp = _tmp_model.results_[["PlayerID", "GP"]]
-        blocks = load_blocks(args.season, _war_gp)
+        blocks = load_blocks(args.season)
 
     try:
         model.fit(game_data, schedule_df=schedule, blocks_df=blocks)
@@ -386,11 +381,11 @@ BLOCKS_FILES = {
 }
 
 
-def load_blocks(season: str | None, war_df: pd.DataFrame) -> pd.DataFrame | None:
+def load_blocks(season: str | None) -> pd.DataFrame | None:
     """
-    Load blocks CSV for the given season, scaling counts for 2025-26
-    where the API snapshot has fewer games than our scraped data.
+    Load blocks CSV for the given season.
     Returns a DataFrame with columns [PlayerID, blocks], or None if unavailable.
+    Raw observed counts are used as-is; the WAR model normalises by TOI.
     """
     if season is None:
         return None   # combined-season mode not yet supported
@@ -401,16 +396,6 @@ def load_blocks(season: str | None, war_df: pd.DataFrame) -> pd.DataFrame | None
 
     blk = pd.read_csv(path)
     blk["PlayerID"] = blk["PlayerID"].astype(int)
-
-    # For 2025-26 the API snapshot covers fewer games than the scraped CSV.
-    # Scale blocks proportionally: blocks_est = (blocks/api_gp) * war_gp
-    if season == "2025-26":
-        gp_map = war_df.set_index("PlayerID")["GP"]
-        blk["war_gp"] = blk["PlayerID"].map(gp_map).fillna(blk["api_gp"])
-        safe_api_gp   = blk["api_gp"].clip(lower=1)
-        blk["blocks"] = (blk["blocks"] / safe_api_gp * blk["war_gp"]).round().astype(int)
-        log.info("2025-26 blocks scaled by war_gp/api_gp ratio.")
-
     return blk[["PlayerID", "blocks"]]
 
 
