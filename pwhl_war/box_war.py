@@ -43,12 +43,25 @@ Method
      League-mean adjustment:
        league_resid = TOI-weighted average of team-adjusted pm60_resid
        d_adj60      = pm60_resid − league_resid
-       d_value60    = d_adj60 × defense_weight
+       pm_val60     = d_adj60 × defense_weight
 
      defense_weight = 0.36: empirically optimised — pooled team WAR vs GD
      Spearman across all three seasons (18 team-season observations).
-     rs=0.732 (p=0.0002) at 0.36; plateaus at 0.36-0.38.  Current 0.10
-     gives rs=0.529 (p=0.0165).  2025-26 partial season peaks at 0.94.
+     rs=0.732 (p=0.0002) at 0.36; plateaus at 0.36-0.38.
+
+3b. Blocked shots (optional — requires blocks_df passed to fit()):
+
+     Blocked shots add individual defensive information independent of
+     pm60 (cross-season rs=+0.228 vs rs=+0.151 for dWAR alone).
+
+     blocks60    = blocks / toi_min × 60
+     pos_mean    = league avg blocks60 by position (F or D)
+     blocks60_pos_adj = blocks60 − pos_mean        (removes F/D bias; D blocks 2.5× more)
+     team_mean   = TOI-weighted team avg of blocks60_pos_adj
+     blocks60_adj = blocks60_pos_adj − team_mean   (removes team-quality effect)
+     block_val60  = blocks60_adj × block_weight    (block_weight ≈ xG prevented per block)
+
+     d_value60   = pm_val60 + block_val60
 
 4. Total value per 60:
      value60 = o_xG60 + d_value60
@@ -107,9 +120,12 @@ class XGWar:
     min_toi_min        : Minimum TOI (minutes) to qualify (default 50).
     replacement_pct    : Percentile of value60 that defines replacement level.
     goals_per_win      : Override the Pythagorean estimate if desired.
-    defense_weight     : Weight applied to the defensive component [0, 1].
+    defense_weight     : Weight applied to the pm60 defensive component [0, 1].
                          Default 0.36 (empirically optimised vs team GD).
                          0.0 = offense only.
+    block_weight       : xG value attributed to each position+team adjusted
+                         blocked shot per 60 min. Default 0.04 (~0.04 xG/block).
+                         Only used when blocks_df is passed to fit().
     """
 
     def __init__(
@@ -118,11 +134,13 @@ class XGWar:
         replacement_pct: float = DEFAULT_REPLACEMENT,
         goals_per_win:   float | None = None,
         defense_weight:  float = 0.36,
+        block_weight:    float = 0.04,
     ):
         self.min_toi_min     = min_toi_min
         self.replacement_pct = replacement_pct
         self._gpw_override   = goals_per_win
         self.defense_weight  = defense_weight
+        self.block_weight    = block_weight
 
         self.results_:             pd.DataFrame | None = None
         self.o_replacement_val60_: float | None        = None
@@ -138,12 +156,16 @@ class XGWar:
         self,
         game_data_df: pd.DataFrame,
         schedule_df:  pd.DataFrame | None = None,
+        blocks_df:    pd.DataFrame | None = None,
     ) -> "XGWar":
         """
         Parameters
         ----------
         game_data_df : from PWHLCsvLoader.get_game_data()
         schedule_df  : from PWHLCsvLoader.get_schedule() — for goals_per_win
+        blocks_df    : DataFrame with columns [PlayerID, blocks] — season totals.
+                       For 2025-26, caller should scale blocks by (war_gp/api_gp)
+                       before passing.  If None, block component is skipped.
         """
         df = self._aggregate(game_data_df)
 
@@ -204,6 +226,43 @@ class XGWar:
         )
         df["d_adj_pm60"] = df["pm60_resid"] - league_resid
         df["d_value60"]  = df["d_adj_pm60"] * self.defense_weight
+
+        # --- Blocked shots (optional) ---
+        if blocks_df is not None and not blocks_df.empty:
+            df = df.merge(
+                blocks_df[["PlayerID", "blocks"]].rename(columns={"blocks": "_blocks"}),
+                on="PlayerID", how="left",
+            )
+            df["_blocks"] = df["_blocks"].fillna(0)
+            df["blocks60"] = df["_blocks"] / df["toi_min"].clip(lower=0.1) * 60
+
+            # Position group (D or F)
+            df["_pos"] = df["position"].str.upper().map(
+                lambda p: "D" if p in {"LD", "RD", "D"} else "F"
+            )
+
+            # Position-adjust: remove F/D baseline difference
+            pos_means = df[qual_mask].groupby("_pos")["blocks60"].mean()
+            df["blocks60_pos_adj"] = df["blocks60"] - df["_pos"].map(pos_means).fillna(0)
+
+            # Team-adjust: remove team-quality shot-volume effect
+            blk_team = (
+                df[qual_mask]
+                .groupby("Team")["blocks60_pos_adj"]
+                .apply(lambda g: np.average(g, weights=df.loc[g.index, "toi_min"].clip(lower=0.1)))
+            )
+            df["blocks60_adj"] = df["blocks60_pos_adj"] - df["Team"].map(blk_team).fillna(0)
+
+            df["block_val60"] = df["blocks60_adj"] * self.block_weight
+            df["d_value60"]   = df["d_value60"] + df["block_val60"]
+            log.info(
+                "Blocks: pos means F=%.3f D=%.3f  block_weight=%.3f",
+                pos_means.get("F", 0), pos_means.get("D", 0), self.block_weight,
+            )
+        else:
+            df["blocks60"] = 0.0
+            df["blocks60_adj"] = 0.0
+            df["block_val60"]  = 0.0
 
         # --- Combined value ---
         df["value60"] = df["o_xG60"] + df["d_value60"]
@@ -284,6 +343,7 @@ class XGWar:
             "G", "A1", "A2", "plusMinus", "PIM",
             # xG + defensive proxy metrics
             "total_ixG", "pm60", "pm60_resid", "d_adj_pm60",
+            "blocks60", "blocks60_adj", "block_val60",
             "o_xG60", "d_value60", "value60",
             # WAR components
             "oGAA", "dGAA", "GAA",
