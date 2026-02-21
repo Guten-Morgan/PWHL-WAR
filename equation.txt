@@ -1,0 +1,40 @@
+Complete WAR Equation
+
+1. Aggregate game logs → season totals per player
+
+── OFFENSE ──────────────────────────────────────────────
+o_xG60  = (EV_ixG + PP_ixG + SH_ixG) / toi_min × 60
+
+── DEFENSE ──────────────────────────────────────────────
+pm60        = plusMinus / toi_min × 60
+β           = OLS(pm60 ~ o_xG60) on qualified players
+pm60_resid  = pm60 − (α + β·o_xG60)
+team_resid  = TOI-weighted team mean(pm60_resid)  [qual. only]
+pm60_resid  = pm60_resid − team_resid             [team-adjust]
+league_resid = TOI-weighted league mean(pm60_resid)
+d_adj_pm60  = pm60_resid − league_resid
+pm_val60    = d_adj_pm60 × 0.36
+
+── BLOCKS (optional) ─────────────────────────────────────
+blocks60        = season_blocks / toi_min × 60
+blocks60_pos    = blocks60 − position_mean(F|D)
+blocks60_adj    = blocks60_pos − TOI-weighted team mean(blocks60_pos)
+block_val60     = blocks60_adj × 0.04
+
+── COMBINED D VALUE ──────────────────────────────────────
+d_value60  = pm_val60 + block_val60
+
+── REPLACEMENT LEVELS (p25 of qualified pool) ────────────
+o_repl  = percentile(25, o_xG60)
+d_repl  = percentile(25, d_value60)
+
+── GAR ───────────────────────────────────────────────────
+oGAR = (o_xG60   − o_repl) × toi_min / 60
+dGAR = (d_value60 − d_repl) × toi_min / 60
+
+── WAR ───────────────────────────────────────────────────
+gpw   = 2 × avg_goals_per_team_per_game   (Pythagorean)
+oWAR  = oGAR / gpw
+dWAR  = dGAR / gpw    (signed: good defense > 0)
+WAR   = oWAR + dWAR
+war60 = WAR / toi_min × 60
