@@ -1,8 +1,12 @@
 """
 xga_war.py
 ----------
-xG-based WAR for PWHL skaters using shot-quality-adjusted xGA as the
-defensive component instead of residual plus/minus.
+WAR for PWHL skaters using Fenwick Shots Against (FA) as the defensive
+component.  FA was chosen over xGA after a YtY stability test showed
+FA-dWAR is more repeatable (Spearman r=0.247, p=0.015) than xGA-dWAR
+(r=0.174, p=0.088) across the 2023-24 to 2024-25 transition.  The
+binary quality labels in the PWHL API add noise rather than signal for
+the defensive metric; raw shot counts are cleaner.
 
 Data source: pwhl.hockey-statistics.com API (play-by-play + game summaries)
 
@@ -18,44 +22,51 @@ Method
      Quality shot      → 0.128  (incl. "Quality goal")
      Non-quality shot  → 0.051  (incl. "Non quality goal")
 
-3. Defensive value: team xGA attributed by TOI share
+3. Defensive value: team FA attributed by TOI share
 
-   a. For each game, compute team-level Fenwick xGA:
-        team_xGA_game = Σ xG(shot) for all shots against team T in that game
-        (uses shot events only — blocked shots excluded, matching Fenwick)
+   a. For each game, compute team-level Fenwick Shots Against (FA):
+        team_FA_game = count of all shots against team T with a quality label
+        (uses shot events only — blocked shots excluded; missed shots not
+        published by PWHL API so this is effectively Shots On Goal Against)
 
    b. Attribute to each skater by their TOI share within the game:
-        player_xGA_game  = team_xGA_game × (player_toi_game / team_skater_toi_game)
+        player_FA_game  = team_FA_game × (player_toi_game / team_skater_toi_game)
 
    c. Aggregate across all games the player appeared in:
-        xGA60 = Σ(player_xGA_game) / toi_min × 60
+        FA60 = Σ(player_FA_game) / toi_min × 60
 
    d. Players with higher offensive output tend to spend more time in the
       offensive zone, facing fewer shots against.  Remove this correlation:
-        β           = OLS slope of xGA60 ~ ixG60 (qualified players)
-        xGA60_resid = xGA60 − (α + β × ixG60)
+        β          = OLS slope of FA60 ~ ixG60 (qualified players)
+        FA60_resid = FA60 − (α + β × ixG60)
 
    e. Team-quality adjustment (same as box_war):
-        team_xGA_resid = TOI-weighted mean xGA60_resid per team
-        xGA60_resid    = xGA60_resid − team_xGA_resid
+        team_FA_resid = TOI-weighted mean FA60_resid per team
+        FA60_resid    = FA60_resid − team_FA_resid
 
    f. League-mean-adjust and scale:
-        league_resid = TOI-weighted mean of team-adjusted xGA60_resid
-        d_adj_xGA60  = xGA60_resid − league_resid
-        d_value60    = −d_adj_xGA60 × defense_weight
-        (negated so that fewer xGA than expected → positive d_value → good dWAR)
+        league_resid = TOI-weighted mean of team-adjusted FA60_resid
+        d_adj_FA60   = FA60_resid − league_resid
+        d_value60    = −d_adj_FA60 × defense_weight
+        (negated so that fewer shots against than expected → positive d_value)
 
 4. Blocked shots (optional, same framework as box_war):
         d_value60 += blocks60_adj × block_weight
 
 5. Replacement levels, GAR, WAR: identical to box_war.
 
+defense_weight calibration
+--------------------------
+With FA in shots/60 units (std ~0.207) vs xGA in xG/60 units (std ~0.022),
+the weight is scaled to preserve equivalent defensive signal magnitude:
+   defense_weight_FA = 0.36 × (0.022 / 0.207) ≈ 0.039
+
 Limitation
 ----------
-Without on-ice player IDs per shot event (not published by PWHL), xGA is
+Without on-ice player IDs per shot event (not published by PWHL), FA is
 attributed proportionally by TOI — not by actual defensive presence.
-This makes it a team-quality proxy, but using xG rather than goals
-provides more stable signal (less luck) than residual +/-.
+This makes it a team-quality proxy; individual dWAR reflects consistent
+defensive deployment and team quality more than isolated individual skill.
 """
 
 from __future__ import annotations
@@ -207,8 +218,10 @@ class XGAWar:
     ----------
     min_toi_min     : Minimum TOI (minutes) to qualify (default 50).
     replacement_pct : Percentile defining replacement level (default 25).
-    defense_weight  : Scale applied to the d_adj_xGA60 defensive component.
-                      Default 0.36 (same tuning as box_war).
+    defense_weight  : Scale applied to the d_adj_FA60 defensive component.
+                      Default 0.039 (calibrated so FA-dWAR has equivalent
+                      signal magnitude to the previous xGA-dWAR at 0.36;
+                      derived from std-dev ratio: 0.36 × 0.022/0.207).
     block_weight    : xG value per position+team-adjusted block per 60.
                       Default 0.04.  Only used when blocks_df is supplied.
     goals_per_win   : Override Pythagorean estimate if desired.
@@ -218,7 +231,7 @@ class XGAWar:
         self,
         min_toi_min:     float = DEFAULT_MIN_TOI,
         replacement_pct: float = DEFAULT_REPLACEMENT,
-        defense_weight:  float = 0.36,
+        defense_weight:  float = 0.039,
         block_weight:    float = 0.04,
         goals_per_win:   float | None = None,
     ):
@@ -263,8 +276,8 @@ class XGAWar:
         # --- Offensive xG60 ---
         df["ixG60"] = df["ixG"] / df["toi_min"].clip(lower=0.1) * 60
 
-        # --- Defensive xGA60 ---
-        df["xGA60"] = df["xGA"] / df["toi_min"].clip(lower=0.1) * 60
+        # --- Defensive FA60 (Fenwick Shots Against per 60) ---
+        df["FA60"] = df["FA"] / df["toi_min"].clip(lower=0.1) * 60
 
         qual_mask = df["toi_min"] >= self.min_toi_min
         qual_fit  = df[qual_mask]
@@ -272,34 +285,34 @@ class XGAWar:
         # Regress out correlation with offensive zone time
         reg = LinearRegression().fit(
             qual_fit[["ixG60"]].values,
-            qual_fit["xGA60"].values,
+            qual_fit["FA60"].values,
         )
-        df["xGA60_resid"] = df["xGA60"] - (
+        df["FA60_resid"] = df["FA60"] - (
             reg.intercept_ + reg.coef_[0] * df["ixG60"]
         )
-        log.info("xGA60 ~ ixG60: intercept=%.3f slope=%.3f",
+        log.info("FA60 ~ ixG60: intercept=%.3f slope=%.3f",
                  reg.intercept_, reg.coef_[0])
 
         # Team-quality adjustment
         team_resid = (
             df[qual_mask]
-            .groupby("team")["xGA60_resid"]
+            .groupby("team")["FA60_resid"]
             .apply(lambda g: np.average(
                 g, weights=df.loc[g.index, "toi_min"].clip(lower=0.1)
             ))
         )
-        df["team_xGA_resid"] = df["team"].map(team_resid).fillna(0)
-        df["xGA60_resid"]    = df["xGA60_resid"] - df["team_xGA_resid"]
-        log.info("Team xGA60_resid adjustments: %s",
+        df["team_FA_resid"] = df["team"].map(team_resid).fillna(0)
+        df["FA60_resid"]    = df["FA60_resid"] - df["team_FA_resid"]
+        log.info("Team FA60_resid adjustments: %s",
                  team_resid.round(3).to_dict())
 
-        # League-mean-adjust; negate so fewer xGA → positive d_value
+        # League-mean-adjust; negate so fewer FA → positive d_value
         league_resid = np.average(
-            df.loc[qual_mask, "xGA60_resid"],
+            df.loc[qual_mask, "FA60_resid"],
             weights=df.loc[qual_mask, "toi_min"].clip(lower=0.1),
         )
-        df["d_adj_xGA60"] = df["xGA60_resid"] - league_resid
-        df["d_value60"]   = -df["d_adj_xGA60"] * self.defense_weight
+        df["d_adj_FA60"] = df["FA60_resid"] - league_resid
+        df["d_value60"]  = -df["d_adj_FA60"] * self.defense_weight
 
         # --- Blocked shots (optional) ---
         if blocks_df is not None and not blocks_df.empty:
@@ -370,7 +383,7 @@ class XGAWar:
         df  = df[df["toi_min"] >= cut].reset_index(drop=True)
         cols = [c for c in [
             "name", "player_id", "team", "pos", "gp", "toi_min",
-            "ixG", "xGA", "ixG60", "xGA60", "xGA60_resid", "d_adj_xGA60",
+            "ixG", "FA", "ixG60", "FA60", "FA60_resid", "d_adj_FA60",
             "blocks60", "blocks60_adj", "block_val60",
             "d_value60", "value60",
             "oGAR", "dGAR", "GAR", "oWAR", "dWAR", "WAR", "war60",
@@ -390,7 +403,7 @@ class XGAWar:
         print(f"  Goals per win: {self.goals_per_win_:.3f}")
         print(f"{'='*68}")
         show = [c for c in ["name", "team", "pos", "gp", "toi_min",
-                             "ixG60", "xGA60", "d_value60", "oWAR", "dWAR", "WAR"]
+                             "ixG60", "FA60", "d_value60", "oWAR", "dWAR", "WAR"]
                 if c in df.columns]
         print(df[show].head(top_n).to_string(index=False))
         print(f"{'='*68}\n")
@@ -478,9 +491,9 @@ class XGAWar:
             if away_tid and away_tid in tid_to_abbr:
                 away_abbr = tid_to_abbr[away_tid]
 
-            # --- Team xG from shot events ---
-            team_xG_for: dict[str, float] = {}
-            player_ixG:  dict[int, float] = {}
+            # --- Team FA (shot count) and individual ixG from shot events ---
+            team_FA_for: dict[str, float] = {}   # shot counts against each team
+            player_ixG:  dict[int, float] = {}   # xG-weighted, for oWAR (unchanged)
 
             for e in pbp:
                 if e.get("event") != "shot":
@@ -488,23 +501,25 @@ class XGAWar:
                 d   = e["details"]
                 q   = d.get("shotQuality", "")
                 xg  = XG_MAP.get(q, 0.0)
-                if xg == 0.0:
-                    continue
                 tid = str(d.get("shooterTeamId", ""))
                 pid = d.get("shooter", {}).get("id")
-                team_xG_for[tid] = team_xG_for.get(tid, 0.0) + xg
-                if pid:
+                if not q:
+                    continue   # skip events with no quality label
+                # Defense: raw shot count (FA), not xG-weighted
+                team_FA_for[tid] = team_FA_for.get(tid, 0.0) + 1.0
+                # Offense: still xG-weighted for individual oWAR
+                if xg > 0.0 and pid:
                     player_ixG[pid] = player_ixG.get(pid, 0.0) + xg
                 if "goal" in q:
                     total_goals += 1
 
-            home_xGA = team_xG_for.get(away_tid, 0.0)   # away scored on home
-            away_xGA = team_xG_for.get(home_tid, 0.0)   # home scored on away
+            home_FA = team_FA_for.get(away_tid, 0.0)   # shots on home goalie
+            away_FA = team_FA_for.get(home_tid, 0.0)   # shots on away goalie
 
-            # --- Parse player TOI from summary and attribute xGA ---
-            for side, team_abbr, team_xGA in [
-                ("homeTeam",     home_abbr, home_xGA),
-                ("visitingTeam", away_abbr, away_xGA),
+            # --- Parse player TOI from summary and attribute FA ---
+            for side, team_abbr, team_FA in [
+                ("homeTeam",     home_abbr, home_FA),
+                ("visitingTeam", away_abbr, away_FA),
             ]:
                 skaters = summ.get(side, {}).get("skaters", [])
                 skater_tois: list[tuple[int, float, str, str]] = []
@@ -534,13 +549,13 @@ class XGAWar:
                             "pos":  pos,
                             "team": team_abbr,
                             "gp": 0, "toi_min": 0.0,
-                            "ixG": 0.0, "xGA": 0.0,
+                            "ixG": 0.0, "FA": 0.0,
                         }
                     p = players[key]
                     p["gp"]      += 1
                     p["toi_min"] += toi
                     p["ixG"]     += player_ixG.get(pid, 0.0)
-                    p["xGA"]     += team_xGA * (toi / team_total_toi)
+                    p["FA"]      += team_FA * (toi / team_total_toi)
 
         self._total_goals  = total_goals
         self._n_team_games = n_team_games

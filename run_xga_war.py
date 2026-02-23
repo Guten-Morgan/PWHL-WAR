@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
                    required=True, help="Season to analyse.")
     p.add_argument("--min-toi",         type=float, default=50.0)
     p.add_argument("--replacement-pct", type=float, default=25.0)
-    p.add_argument("--defense-weight",  type=float, default=0.36)
+    p.add_argument("--defense-weight",  type=float, default=0.039)
     p.add_argument("--block-weight",    type=float, default=0.04)
     p.add_argument("--no-blocks",       action="store_true")
     p.add_argument("--output",          type=str,
