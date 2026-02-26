@@ -28,7 +28,9 @@ if hasattr(sys.stderr, "reconfigure"):
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pwhl_war.xga_war import XGAWar, PWHLApiLoader
+from pwhl_war.xga_war   import XGAWar, PWHLApiLoader
+from pwhl_war.constants import DEFAULT_MIN_TOI, DEFAULT_DEFENSE_WEIGHT, DEFAULT_BLOCK_WEIGHT
+from pwhl_war.io_utils  import load_blocks
 
 logging.basicConfig(
     level  = logging.INFO,
@@ -36,13 +38,6 @@ logging.basicConfig(
     datefmt= "%H:%M:%S",
 )
 log = logging.getLogger("run_xga_war")
-
-BLOCKS_FILES = {
-    "2023-24": Path("pwhl_war/data/raw/blocks_2324.csv"),
-    "2024-25": Path("pwhl_war/data/raw/blocks_2425.csv"),
-    "2025-26": Path("pwhl_war/data/raw/blocks_2526.csv"),
-}
-
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="PWHL xGA-WAR (experimental)")
@@ -56,16 +51,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output",          type=str,
                    default="pwhl_xga_war_results.csv")
     return p.parse_args()
-
-
-def load_blocks(season: str) -> pd.DataFrame | None:
-    path = BLOCKS_FILES.get(season)
-    if path is None or not path.exists():
-        log.warning("No blocks file for %s — skipping block component.", season)
-        return None
-    blk = pd.read_csv(path)
-    blk["PlayerID"] = blk["PlayerID"].astype(int)
-    return blk[["PlayerID", "blocks"]]
 
 
 def main() -> None:

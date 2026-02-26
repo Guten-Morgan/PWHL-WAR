@@ -15,12 +15,12 @@ Method
 1. Fetch play-by-play and game summaries for each completed game.
 
 2. Offensive value: individual xG per 60 min
-     ixG         = sum of xG for all shots taken by the player
+     ixG         = sum of API-native per-event xG for all shots taken by player
      ixG60       = ixG / toi_min × 60
 
-   xG values (empirically derived from 2024-25 full season, 102 games):
-     Quality shot      → 0.128  (incl. "Quality goal")
-     Non-quality shot  → 0.051  (incl. "Non quality goal")
+   xG is taken directly from the PBP API's `xG` field (continuous float).
+   Null xG (blocked shots, events without coordinates) default to 0.0.
+   This replaces the previous two-value XG_MAP approximation.
 
 3. Defensive value: team FA attributed by TOI share
 
@@ -81,39 +81,15 @@ import pandas as pd
 import requests
 from sklearn.linear_model import LinearRegression
 
+from .constants import SEASON_YEARS, TEAM_MAP, DEFAULT_MIN_TOI, DEFAULT_REPLACEMENT_PCT
+from . import stats_utils
+
 log = logging.getLogger(__name__)
 
 API_BASE   = "https://pwhl.hockey-statistics.com/api"
 CACHE_DIR  = Path(__file__).parent / "data" / "raw" / "pbp_cache"
 
-# Empirical xG rates from 2024-25 full season (102 games)
-XG_MAP = {
-    "Quality on net":    0.128,
-    "Quality goal":      0.128,
-    "Non quality on net":0.051,
-    "Non quality goal":  0.051,
-}
-
-TEAM_MAP = {
-    "Boston Fleet":         "BOS",
-    "Minnesota Frost":      "MIN",
-    "Montreal Victoire":    "MTL",
-    "Montréal Victoire":    "MTL",   # accented form from schedule API
-    "New York Sirens":      "NY",
-    "Ottawa Charge":        "OTT",
-    "Toronto Sceptres":     "TOR",
-    "Seattle Torrent":      "SEA",
-    "Vancouver Goldeneyes": "VAN",
-}
-
-SEASON_YEARS = {
-    "2023-24": "2023/2024",
-    "2024-25": "2024/2025",
-    "2025-26": "2025/2026",
-}
-
-DEFAULT_MIN_TOI     = 50.0
-DEFAULT_REPLACEMENT = 25.0
+DEFAULT_REPLACEMENT = DEFAULT_REPLACEMENT_PCT
 
 
 # ---------------------------------------------------------------------------
@@ -199,10 +175,12 @@ def _parse_toi(s) -> float:
 
 def _pid_from_url(url: str) -> int | None:
     """Extract numeric player ID from headshot URL."""
+    if not url:
+        return None
     try:
         stem = Path(url).stem
         return int(stem)
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
         return None
 
 
@@ -280,39 +258,13 @@ class XGAWar:
         df["FA60"] = df["FA"] / df["toi_min"].clip(lower=0.1) * 60
 
         qual_mask = df["toi_min"] >= self.min_toi_min
-        qual_fit  = df[qual_mask]
 
-        # Regress out correlation with offensive zone time
-        reg = LinearRegression().fit(
-            qual_fit[["ixG60"]].values,
-            qual_fit["FA60"].values,
+        df = stats_utils.compute_defensive_value60(
+            df, qual_mask, "FA60", "ixG60", "team", self.defense_weight, sign=-1
         )
-        df["FA60_resid"] = df["FA60"] - (
-            reg.intercept_ + reg.coef_[0] * df["ixG60"]
-        )
-        log.info("FA60 ~ ixG60: intercept=%.3f slope=%.3f",
-                 reg.intercept_, reg.coef_[0])
-
-        # Team-quality adjustment
-        team_resid = (
-            df[qual_mask]
-            .groupby("team")["FA60_resid"]
-            .apply(lambda g: np.average(
-                g, weights=df.loc[g.index, "toi_min"].clip(lower=0.1)
-            ))
-        )
-        df["team_FA_resid"] = df["team"].map(team_resid).fillna(0)
-        df["FA60_resid"]    = df["FA60_resid"] - df["team_FA_resid"]
-        log.info("Team FA60_resid adjustments: %s",
-                 team_resid.round(3).to_dict())
-
-        # League-mean-adjust; negate so fewer FA → positive d_value
-        league_resid = np.average(
-            df.loc[qual_mask, "FA60_resid"],
-            weights=df.loc[qual_mask, "toi_min"].clip(lower=0.1),
-        )
-        df["d_adj_FA60"] = df["FA60_resid"] - league_resid
-        df["d_value60"]  = -df["d_adj_FA60"] * self.defense_weight
+        # Preserve legacy column names for downstream consumers
+        df["FA60_resid"] = df["_def_resid"]
+        df["d_adj_FA60"] = df["_def_adj"]
 
         # --- Blocked shots (optional) ---
         if blocks_df is not None and not blocks_df.empty:
@@ -500,14 +452,14 @@ class XGAWar:
                     continue
                 d   = e["details"]
                 q   = d.get("shotQuality", "")
-                xg  = XG_MAP.get(q, 0.0)
+                xg  = float(d.get("xG") or 0.0)  # API-native; 0.0 for null/missing
                 tid = str(d.get("shooterTeamId", ""))
                 pid = d.get("shooter", {}).get("id")
                 if not q:
                     continue   # skip events with no quality label
                 # Defense: raw shot count (FA), not xG-weighted
                 team_FA_for[tid] = team_FA_for.get(tid, 0.0) + 1.0
-                # Offense: still xG-weighted for individual oWAR
+                # Offense: API-native xG for individual oWAR
                 if xg > 0.0 and pid:
                     player_ixG[pid] = player_ixG.get(pid, 0.0) + xg
                 if "goal" in q:

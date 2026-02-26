@@ -105,6 +105,9 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 
+from . import stats_utils
+from .coord_xg import CoordXGModel
+
 log = logging.getLogger(__name__)
 
 DEFAULT_MIN_TOI      = 50.0    # minutes; ~5 full games
@@ -157,6 +160,7 @@ class XGWar:
         game_data_df: pd.DataFrame,
         schedule_df:  pd.DataFrame | None = None,
         blocks_df:    pd.DataFrame | None = None,
+        pbp_df:       pd.DataFrame | None = None,
     ) -> "XGWar":
         """
         Parameters
@@ -166,6 +170,12 @@ class XGWar:
         blocks_df    : DataFrame with columns [PlayerID, blocks] — season totals.
                        Raw observed counts; model normalises to per-60 via TOI.
                        If None, block component is skipped.
+        pbp_df       : Optional PBP DataFrame from CoordLoader.fetch_pbp().
+                       When provided, a PWHL-native CoordXGModel is trained and
+                       its per-player predicted xG totals replace the CSV ixG sum
+                       (EV_ixG + PP_ixG + SH_ixG) for matched players.
+                       Player names are matched case-insensitively (stripped).
+                       Unmatched players fall back to the CSV ixG sum.
         """
         df = self._aggregate(game_data_df)
 
@@ -175,6 +185,29 @@ class XGWar:
 
         # --- Offensive xG per 60 ---
         df["total_ixG"] = df["EV_ixG"] + df["PP_ixG"] + df["SH_ixG"]
+
+        # If PBP data is provided, replace CSV ixG with PWHL-native coord xG
+        if pbp_df is not None and not pbp_df.empty:
+            coord_model  = CoordXGModel().train(pbp_df)
+            coord_season = coord_model.player_xg_season(pbp_df)
+            # Aggregate by player (in case pbp_df spans multiple seasons)
+            coord_season["_name_key"] = (
+                coord_season["player"].str.lower().str.strip()
+            )
+            coord_totals = (
+                coord_season.groupby("_name_key", as_index=False)["coord_xG"]
+                .sum()
+            )
+            df["_name_key"] = df["Name"].str.lower().str.strip()
+            df = df.merge(coord_totals, on="_name_key", how="left")
+            matched = df["coord_xG"].notna()
+            df.loc[matched, "total_ixG"] = df.loc[matched, "coord_xG"]
+            df.drop(columns=["_name_key", "coord_xG"], inplace=True)
+            log.info(
+                "Coord xG: matched %d/%d players; %d fell back to CSV ixG",
+                matched.sum(), len(df), (~matched).sum(),
+            )
+
         df["o_xG60"]    = df["total_ixG"] / df["toi_min"].clip(lower=0.1) * 60
 
         # --- Defensive: residual plus/minus per 60 ---
@@ -191,41 +224,13 @@ class XGWar:
         df["pm60"] = df["plusMinus"] / df["toi_min"].clip(lower=0.1) * 60
 
         qual_mask = df["toi_min"] >= self.min_toi_min
-        qual_fit  = df[qual_mask]
 
-        reg = LinearRegression().fit(
-            qual_fit[["o_xG60"]].values,
-            qual_fit["pm60"].values,
+        df = stats_utils.compute_defensive_value60(
+            df, qual_mask, "pm60", "o_xG60", "Team", self.defense_weight, sign=1
         )
-        df["pm60_resid"] = df["pm60"] - (
-            reg.intercept_ + reg.coef_[0] * df["o_xG60"]
-        )
-        log.info(
-            "pm60 ~ o_xG60: intercept=%.3f slope=%.3f",
-            reg.intercept_, reg.coef_[0],
-        )
-
-        # Team-adjust: subtract each team's TOI-weighted mean residual.
-        # This removes team-quality contamination — players on dominant teams
-        # would otherwise get inflated dWAR simply for playing with good linemates.
-        # Qualified players only anchor the team means.
-        team_resid = (
-            df[qual_mask]
-            .groupby("Team")["pm60_resid"]
-            .apply(lambda g: np.average(g, weights=df.loc[g.index, "toi_min"].clip(lower=0.1)))
-        )
-        df["team_resid"] = df["Team"].map(team_resid).fillna(0)
-        df["pm60_resid"] = df["pm60_resid"] - df["team_resid"]
-        log.info("Team pm60_resid adjustments: %s",
-                 team_resid.round(3).to_dict())
-
-        # League-mean-adjust the (now team-adjusted) residuals
-        league_resid = np.average(
-            df.loc[qual_mask, "pm60_resid"],
-            weights=df.loc[qual_mask, "toi_min"].clip(lower=0.1),
-        )
-        df["d_adj_pm60"] = df["pm60_resid"] - league_resid
-        df["d_value60"]  = df["d_adj_pm60"] * self.defense_weight
+        # Preserve legacy column names for downstream consumers
+        df["pm60_resid"] = df["_def_resid"]
+        df["d_adj_pm60"] = df["_def_adj"]
 
         # --- Blocked shots (optional) ---
         if blocks_df is not None and not blocks_df.empty:
@@ -351,7 +356,13 @@ class XGWar:
             "oWAR", "dWAR", "WAR", "war60",
             "o_replacement_val60", "d_replacement_val60", "goals_per_win",
         ] if c in df.columns]
-        return df[cols]
+        return df[cols].rename(columns={
+            "Team": "team",
+            "PlayerID": "player_id",
+            "Name": "name",
+            "position": "pos",
+            "GP": "gp",
+        })
 
     def summary(self, top_n: int = 25) -> None:
         df = self.get_war()

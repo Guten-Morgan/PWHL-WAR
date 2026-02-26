@@ -40,8 +40,10 @@ from PIL import Image, ImageDraw, ImageOps
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pwhl_war.csv_loader import PWHLCsvLoader
-from pwhl_war.box_war    import XGWar
+from pwhl_war.csv_loader  import PWHLCsvLoader
+from pwhl_war.box_war     import XGWar
+from pwhl_war.constants   import DEFAULT_MIN_TOI, DEFAULT_DEFENSE_WEIGHT, DEFAULT_BLOCK_WEIGHT
+from pwhl_war.io_utils    import load_blocks
 
 HEADSHOT_DIR = Path("pwhl_war/data/raw/headshots")
 HEADSHOT_URL = "https://assets.leaguestat.com/pwhl/120x160/{player_id}.jpg"
@@ -370,33 +372,8 @@ def main() -> None:
 
 
 def _top_name(df: pd.DataFrame) -> str:
-    col = "Name" if "Name" in df.columns else "PlayerID"
-    return str(df.iloc[0][col]) if len(df) else "N/A"
-
-
-BLOCKS_FILES = {
-    "2023-24": Path("pwhl_war/data/raw/blocks_2324.csv"),
-    "2024-25": Path("pwhl_war/data/raw/blocks_2425.csv"),
-    "2025-26": Path("pwhl_war/data/raw/blocks_2526.csv"),
-}
-
-
-def load_blocks(season: str | None) -> pd.DataFrame | None:
-    """
-    Load blocks CSV for the given season.
-    Returns a DataFrame with columns [PlayerID, blocks], or None if unavailable.
-    Raw observed counts are used as-is; the WAR model normalises by TOI.
-    """
-    if season is None:
-        return None   # combined-season mode not yet supported
-    path = BLOCKS_FILES.get(season)
-    if path is None or not path.exists():
-        log.warning("No blocks file for season %s — skipping block component.", season)
-        return None
-
-    blk = pd.read_csv(path)
-    blk["PlayerID"] = blk["PlayerID"].astype(int)
-    return blk[["PlayerID", "blocks"]]
+    col = next((c for c in ["name", "Name", "player_id", "PlayerID"] if c in df.columns), None)
+    return str(df.iloc[0][col]) if (len(df) and col) else "N/A"
 
 
 if __name__ == "__main__":

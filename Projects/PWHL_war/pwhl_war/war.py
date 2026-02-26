@@ -54,6 +54,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from .constants import DEFAULT_REPLACEMENT_PCT
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -61,9 +63,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Replacement level percentile: players at or below this RAPM percentile
-# are considered "replacement level".  The 20th percentile means roughly
-# the bottom fifth of rostered players — in line with NHL WAR literature.
-REPLACEMENT_PERCENTILE: float = 20.0
+# are considered "replacement level".  Previously 20.0; aligned to 25.0
+# to match box_war and xga_war defaults.
+REPLACEMENT_PERCENTILE: float = DEFAULT_REPLACEMENT_PCT  # previously 20.0
 
 # Minimum TOI (minutes) required to be considered a full-season player
 # for the replacement-level calculation.

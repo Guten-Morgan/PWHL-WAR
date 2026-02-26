@@ -133,12 +133,6 @@ class RAPMModel:
         mask = weights > 0
         X, y_net, weights = X[mask], y_net[mask], weights[mask]
 
-        # Offensive target: home goals-for per 60
-        y_off = np.array([
-            (row["home_goals"] / (row["duration_secs"] / 60)) * 60
-            for _, row in df[mask.tolist() + [False] * (len(df) - mask.sum())].iterrows()
-        ], dtype=np.float32)
-
         # Re-derive offense and defense targets correctly from filtered df
         df_filtered = df[mask].reset_index(drop=True)
         dur_min     = df_filtered["duration_secs"] / 60.0

@@ -18,13 +18,15 @@ from pathlib import Path
 
 import requests
 
+from .constants import HOCKEYTECH_API_KEY
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 BASE_URL    = "https://lscluster.hockeytech.com/feed/index.php"
-API_KEY     = "446521baf8c38984"
+API_KEY     = HOCKEYTECH_API_KEY
 CLIENT_CODE = "pwhl"
 CACHE_DIR   = Path(__file__).parent.parent / "pwhl_war" / "data" / "raw"
 

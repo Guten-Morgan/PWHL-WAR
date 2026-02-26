@@ -53,9 +53,16 @@ logging.basicConfig(
 )
 log = logging.getLogger("run_combined_war")
 
-# Defensive signal: 100% xGA (Fenwick), 0% pm60 box
-# pm60 dWAR is near-random at individual level (YtY r=0.03-0.18);
-# xGA dWAR is goalie-agnostic and significantly more repeatable.
+# ── Model blending weights ────────────────────────────────────────────────────
+# Defensive signal: 100% FA/xGA (Fenwick), 0% pm60 box.
+#
+# Rationale for BOX_WEIGHT = 0.00:
+#   FA-dWAR was validated as more repeatable year-over-year (Spearman r=0.247,
+#   p=0.015) than pm60-dWAR (r=0.174, p=0.088) across the 2023-24 → 2024-25
+#   and 2024-25 → 2025-26 transitions.  pm60-dWAR is near-random at the
+#   individual level; xGA/FA-dWAR is goalie-agnostic by construction.
+#   The name "combined" is retained for historical reasons — the weights
+#   are intentionally 0.0/1.0, not a placeholder.
 XGA_WEIGHT = 1.00
 BOX_WEIGHT = 0.00
 
@@ -73,6 +80,8 @@ def main() -> None:
 
     log.info("Loading box WAR from %s", args.box_csv)
     box = pd.read_csv(args.box_csv)
+    # box_war.get_war() outputs lowercase snake_case since Phase 4 refactor;
+    # keep this rename as a no-op fallback for pre-refactor CSVs on disk.
     box = box.rename(columns={"Team": "team", "PlayerID": "player_id", "Name": "name"})
 
     log.info("Loading xGA WAR from %s", args.xga_csv)

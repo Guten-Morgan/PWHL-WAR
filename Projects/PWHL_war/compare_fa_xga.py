@@ -16,22 +16,17 @@ from scipy import stats
 from sklearn.linear_model import LinearRegression
 
 sys.path.insert(0, ".")
-from pwhl_war.xga_war import PWHLApiLoader, XG_MAP, _parse_toi, _pid_from_url
+from pwhl_war.xga_war    import PWHLApiLoader, XG_MAP, _parse_toi, _pid_from_url
+from pwhl_war.constants  import SEASON_YEARS, TEAM_MAP, DEFAULT_MIN_TOI, DEFAULT_REPLACEMENT_PCT
 
 logging.basicConfig(level=logging.WARNING)
 
 CACHE    = Path("pwhl_war/data/raw/pbp_cache")
 LOADER   = PWHLApiLoader(cache_dir=CACHE)
-MIN_TOI  = 50.0
-REPL_PCT = 25.0
+MIN_TOI  = DEFAULT_MIN_TOI
+REPL_PCT = DEFAULT_REPLACEMENT_PCT
 
-API          = "https://pwhl.hockey-statistics.com/api"
-SEASON_YEARS = {"2023-24":"2023/2024","2024-25":"2024/2025","2025-26":"2025/2026"}
-TEAM_MAP = {
-    "Boston Fleet":"BOS","Minnesota Frost":"MIN","Montreal Victoire":"MTL",
-    "Montreal Victoire":"MTL","New York Sirens":"NY","Ottawa Charge":"OTT",
-    "Toronto Sceptres":"TOR","Seattle Torrent":"SEA","Vancouver Goldeneyes":"VAN",
-}
+API = "https://pwhl.hockey-statistics.com/api"
 
 
 def get_season_games(season):
@@ -187,48 +182,49 @@ def compute_dwar(records, gpw, label):
         columns={"dWAR": col})
 
 
-# ---------------------------------------------------------------------------
-# Run
-# ---------------------------------------------------------------------------
-seasons = ["2023-24","2024-25","2025-26"]
-xga_frames, fa_frames = [], []
+if __name__ == "__main__":
+    # ---------------------------------------------------------------------------
+    # Run
+    # ---------------------------------------------------------------------------
+    seasons = ["2023-24","2024-25","2025-26"]
+    xga_frames, fa_frames = [], []
 
-for s in seasons:
-    print(f"Processing {s} ...", end=" ", flush=True)
-    game_ids, sched = get_season_games(s)
-    print(f"{len(game_ids)} games")
+    for s in seasons:
+        print(f"Processing {s} ...", end=" ", flush=True)
+        game_ids, sched = get_season_games(s)
+        print(f"{len(game_ids)} games")
 
-    rec_xga, tg, ng = aggregate_games(game_ids, sched, use_fa=False)
-    rec_fa,  _,  _  = aggregate_games(game_ids, sched, use_fa=True)
-    gpw = 2 * (tg / ng) if ng > 0 else 6.0
+        rec_xga, tg, ng = aggregate_games(game_ids, sched, use_fa=False)
+        rec_fa,  _,  _  = aggregate_games(game_ids, sched, use_fa=True)
+        gpw = 2 * (tg / ng) if ng > 0 else 6.0
 
-    df_xga = compute_dwar(rec_xga, gpw, "xGA"); df_xga["Season"] = s
-    df_fa  = compute_dwar(rec_fa,  gpw, "FA");  df_fa["Season"]  = s
-    xga_frames.append(df_xga)
-    fa_frames.append(df_fa)
+        df_xga = compute_dwar(rec_xga, gpw, "xGA"); df_xga["Season"] = s
+        df_fa  = compute_dwar(rec_fa,  gpw, "FA");  df_fa["Season"]  = s
+        xga_frames.append(df_xga)
+        fa_frames.append(df_fa)
 
-xga_all = pd.concat(xga_frames, ignore_index=True)
-fa_all  = pd.concat(fa_frames,  ignore_index=True)
+    xga_all = pd.concat(xga_frames, ignore_index=True)
+    fa_all  = pd.concat(fa_frames,  ignore_index=True)
 
-# ---------------------------------------------------------------------------
-# YtY stability
-# ---------------------------------------------------------------------------
-pairs = [("2023-24","2024-25"), ("2024-25","2025-26")]
+    # ---------------------------------------------------------------------------
+    # YtY stability
+    # ---------------------------------------------------------------------------
+    pairs = [("2023-24","2024-25"), ("2024-25","2025-26")]
 
-print("\n" + "="*62)
-print("YtY STABILITY: xGA-dWAR vs FA-dWAR")
-print("(Spearman r of dWAR in season N vs season N+1)")
-print("="*62)
+    print("\n" + "="*62)
+    print("YtY STABILITY: xGA-dWAR vs FA-dWAR")
+    print("(Spearman r of dWAR in season N vs season N+1)")
+    print("="*62)
 
-for s1, s2 in pairs:
-    for tag, all_df, col in [("xGA-dWAR", xga_all, "dWAR_xGA"),
-                              ("FA-dWAR",  fa_all,  "dWAR_FA")]:
-        y1 = all_df[all_df["Season"]==s1][["player_id","team",col]].rename(columns={col:"d1"})
-        y2 = all_df[all_df["Season"]==s2][["player_id","team",col]].rename(columns={col:"d2"})
-        m  = y1.merge(y2, on=["player_id","team"])
-        if len(m) < 5:
-            m = y1.merge(y2, on="player_id")
-        r, p = stats.spearmanr(m["d1"], m["d2"])
-        sig = "*" if p < 0.05 else " "
-        print(f"  {s1}->{s2}  {tag:<12}  n={len(m):>3}  r={r:+.3f}  p={p:.4f}  {sig}")
-    print()
+    for s1, s2 in pairs:
+        for tag, all_df, col in [("xGA-dWAR", xga_all, "dWAR_xGA"),
+                                  ("FA-dWAR",  fa_all,  "dWAR_FA")]:
+            y1 = all_df[all_df["Season"]==s1][["player_id","team",col]].rename(columns={col:"d1"})
+            y2 = all_df[all_df["Season"]==s2][["player_id","team",col]].rename(columns={col:"d2"})
+            m  = y1.merge(y2, on=["player_id","team"])
+            if len(m) < 5:
+                m = y1.merge(y2, on="player_id")
+            r, p = stats.spearmanr(m["d1"], m["d2"])
+            sig = "*" if p < 0.05 else " "
+            print(f"  {s1}->{s2}  {tag:<12}  n={len(m):>3}  r={r:+.3f}  p={p:.4f}  {sig}")
+        print()

@@ -22,28 +22,25 @@ from scipy import stats
 from sklearn.linear_model import LinearRegression
 
 sys.path.insert(0, ".")
-from pwhl_war.xga_war import PWHLApiLoader, XG_MAP, _parse_toi, _pid_from_url
+from pwhl_war.xga_war    import PWHLApiLoader, XG_MAP, _parse_toi, _pid_from_url
+from pwhl_war.constants  import (
+    HOCKEYTECH_API_KEY, SEASON_IDS, SEASON_YEARS, TEAM_MAP,
+    DEFAULT_MIN_TOI, DEFAULT_REPLACEMENT_PCT,
+)
 
 logging.basicConfig(level=logging.WARNING)
 
 CACHE    = Path("pwhl_war/data/raw/pbp_cache")
 LOADER   = PWHLApiLoader(cache_dir=CACHE)
-MIN_TOI  = 50.0
-REPL_PCT = 25.0
+MIN_TOI  = DEFAULT_MIN_TOI
+REPL_PCT = DEFAULT_REPLACEMENT_PCT
 
-API          = "https://pwhl.hockey-statistics.com/api"
-SEASON_YEARS = {"2023-24":"2023/2024","2024-25":"2024/2025","2025-26":"2025/2026"}
-TEAM_MAP = {
-    "Boston Fleet":"BOS","Minnesota Frost":"MIN","Montreal Victoire":"MTL",
-    "Montréal Victoire":"MTL","New York Sirens":"NY","Ottawa Charge":"OTT",
-    "Toronto Sceptres":"TOR","Seattle Torrent":"SEA","Vancouver Goldeneyes":"VAN",
-}
+API      = "https://pwhl.hockey-statistics.com/api"
 
 # HockeyTech standings
-HT_BASE    = "https://lscluster.hockeytech.com/feed/index.php"
-HT_KEY     = "446521baf8c38984"
-HT_CLI     = "pwhl"
-SEASON_IDS = {"2023-24":"1","2024-25":"5","2025-26":"8"}
+HT_BASE = "https://lscluster.hockeytech.com/feed/index.php"
+HT_KEY  = HOCKEYTECH_API_KEY
+HT_CLI  = "pwhl"
 
 
 def get_season_games(season):
@@ -220,64 +217,65 @@ def fetch_standings(season_label, season_id):
     return agg
 
 
-# ── Run ──────────────────────────────────────────────────────────────────
-seasons = ["2023-24","2024-25","2025-26"]
-xga_player, fa_player = {}, {}
+if __name__ == "__main__":
+    # ── Run ──────────────────────────────────────────────────────────────────
+    seasons = ["2023-24","2024-25","2025-26"]
+    xga_player, fa_player = {}, {}
 
-for s in seasons:
-    print(f"Processing {s} ...", end=" ", flush=True)
-    game_ids, sched = get_season_games(s)
-    print(f"{len(game_ids)} games")
-    rec_xga, tg, ng = aggregate_games(game_ids, sched, use_fa=False)
-    rec_fa,  _,  _  = aggregate_games(game_ids, sched, use_fa=True)
-    gpw = 2 * (tg / ng) if ng > 0 else 6.0
-    xga_player[s] = build_player_df(rec_xga, gpw)
-    fa_player[s]  = build_player_df(rec_fa,  gpw)
+    for s in seasons:
+        print(f"Processing {s} ...", end=" ", flush=True)
+        game_ids, sched = get_season_games(s)
+        print(f"{len(game_ids)} games")
+        rec_xga, tg, ng = aggregate_games(game_ids, sched, use_fa=False)
+        rec_fa,  _,  _  = aggregate_games(game_ids, sched, use_fa=True)
+        gpw = 2 * (tg / ng) if ng > 0 else 6.0
+        xga_player[s] = build_player_df(rec_xga, gpw)
+        fa_player[s]  = build_player_df(rec_fa,  gpw)
 
-print("\nFetching standings...", end=" ", flush=True)
-standings_frames = []
-for s, sid in SEASON_IDS.items():
-    df = fetch_standings(s, sid)
-    if not df.empty: standings_frames.append(df)
-standings = pd.concat(standings_frames, ignore_index=True)
-print(f"done ({len(standings)} team-seasons)")
+    print("\nFetching standings...", end=" ", flush=True)
+    standings_frames = []
+    for s, sid in SEASON_IDS.items():
+        df = fetch_standings(s, sid)
+        if not df.empty: standings_frames.append(df)
+    standings = pd.concat(standings_frames, ignore_index=True)
+    print(f"done ({len(standings)} team-seasons)")
 
-def team_spearman(player_dfs, weight, metric="GD"):
-    """Aggregate player WAR to team level and correlate with GD."""
-    rows = []
-    for s, df in player_dfs.items():
-        w = apply_weight(df, weight)
-        t = w.groupby("team",as_index=False)["WAR"].sum().rename(columns={"WAR":"team_WAR"})
-        t["Season"] = s
-        rows.append(t)
-    team_war = pd.concat(rows, ignore_index=True)
-    merged = standings.merge(team_war, on=["Season","team"], how="inner")
-    if len(merged) < 3: return np.nan, np.nan
-    r, p = stats.spearmanr(merged["team_WAR"], merged[metric])
-    return r, p
+    def team_spearman(player_dfs, weight, metric="GD"):
+        """Aggregate player WAR to team level and correlate with GD."""
+        rows = []
+        for s, df in player_dfs.items():
+            w = apply_weight(df, weight)
+            t = w.groupby("team",as_index=False)["WAR"].sum().rename(columns={"WAR":"team_WAR"})
+            t["Season"] = s
+            rows.append(t)
+        team_war = pd.concat(rows, ignore_index=True)
+        merged = standings.merge(team_war, on=["Season","team"], how="inner")
+        if len(merged) < 3: return np.nan, np.nan
+        r, p = stats.spearmanr(merged["team_WAR"], merged[metric])
+        return r, p
 
-# ── Sweep defense_weight ─────────────────────────────────────────────────
-weights = np.round(np.arange(0.005, 0.121, 0.005), 4)
-print("\nSweeping defense_weight (FA-dWAR vs team GD):")
-print(f"  {'weight':>8}  {'r_GD':>8}  {'p':>8}")
+    # ── Sweep defense_weight ─────────────────────────────────────────────────
+    weights = np.round(np.arange(0.005, 0.121, 0.005), 4)
+    print("\nSweeping defense_weight (FA-dWAR vs team GD):")
+    print(f"  {'weight':>8}  {'r_GD':>8}  {'p':>8}")
 
-best_w, best_r = 0.03, -999
-for w in weights:
-    r, p = team_spearman(fa_player, w)
-    sig = "*" if p < 0.05 else " "
-    print(f"  {w:8.3f}  {r:8.3f}  {p:8.4f}  {sig}")
-    if r > best_r:
-        best_r, best_w = r, w
+    best_w, best_r = 0.03, -999
+    for w in weights:
+        r, p = team_spearman(fa_player, w)
+        sig = "*" if p < 0.05 else " "
+        print(f"  {w:8.3f}  {r:8.3f}  {p:8.4f}  {sig}")
+        if r > best_r:
+            best_r, best_w = r, w
 
-print(f"\nOptimal FA defense_weight: {best_w:.3f}  (r_GD={best_r:.3f})")
+    print(f"\nOptimal FA defense_weight: {best_w:.3f}  (r_GD={best_r:.3f})")
 
-# ── Head-to-head: optimal FA vs current xGA (weight=0.36) ───────────────
-r_xga, p_xga = team_spearman(xga_player, 0.36)
-r_fa,  p_fa  = team_spearman(fa_player,  best_w)
+    # ── Head-to-head: optimal FA vs current xGA (weight=0.36) ───────────────
+    r_xga, p_xga = team_spearman(xga_player, 0.36)
+    r_fa,  p_fa  = team_spearman(fa_player,  best_w)
 
-print("\n" + "="*52)
-print("TEAM-LEVEL GD VALIDATION (pooled, all seasons)")
-print("="*52)
-print(f"  xGA-dWAR (w=0.360)  r={r_xga:+.3f}  p={p_xga:.4f}")
-print(f"  FA-dWAR  (w={best_w:.3f})  r={r_fa:+.3f}  p={p_fa:.4f}")
-print(f"\nOptimal FA weight to use in xga_war.py: {best_w}")
+    print("\n" + "="*52)
+    print("TEAM-LEVEL GD VALIDATION (pooled, all seasons)")
+    print("="*52)
+    print(f"  xGA-dWAR (w=0.360)  r={r_xga:+.3f}  p={p_xga:.4f}")
+    print(f"  FA-dWAR  (w={best_w:.3f})  r={r_fa:+.3f}  p={p_fa:.4f}")
+    print(f"\nOptimal FA weight to use in xga_war.py: {best_w}")

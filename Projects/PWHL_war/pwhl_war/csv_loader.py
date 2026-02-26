@@ -30,6 +30,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from .constants import SEASON_CODES
+
 log = logging.getLogger(__name__)
 
 URLS = {
@@ -41,13 +43,6 @@ URLS = {
 }
 
 CACHE_DIR = Path(__file__).parent.parent / "pwhl_war" / "data" / "raw"
-
-# Known season codes in the data
-SEASON_CODES = {
-    "20232024": "2023-24",
-    "20242025": "2024-25",
-    "20252026": "2025-26",
-}
 
 
 class PWHLCsvLoader:
