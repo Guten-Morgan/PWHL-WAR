@@ -11,14 +11,15 @@ Endpoint
 
 Response schema (per-row fields used here)
 ------------------------------------------
-  Event        : str  — "Shot", "Goal", "Block", etc.
-  Strength     : str  — "EV", "PP", "SH", "EN"
+  event        : str  — "Shot", "Goal", "Block", "Penalty"
+  strength     : str  — "5v5", "5v4", "4v5", "PP", "SH", etc.
+                        (normalised to "PP" / "SH" / "EV" / "EN" on load)
   x            : float | null
   y            : float | null
   xG           : float | null  (null for blocked shots)
-  Player 1     : str  — shooter name
-  GameID       : int
-  Season       : str
+  shooter      : str  — shooter name (mapped to "player" in output)
+  game_id      : int | str
+  season       : str  — "2024/2025" etc.
 
 Usage
 -----
@@ -94,9 +95,10 @@ class CoordLoader:
                 log.warning("No data returned for %s", season)
                 continue
 
-            # Filter to requested event types
-            if "Event" in df.columns and events:
-                df = df[df["Event"].isin(events)]
+            # Filter to requested event types (API may use "event" or "Event")
+            ev_col = "event" if "event" in df.columns else "Event" if "Event" in df.columns else None
+            if ev_col and events:
+                df = df[df[ev_col].isin(events)]
 
             # Standardise columns
             df = self._standardise(df, season)
@@ -137,18 +139,26 @@ class CoordLoader:
         # API may return list directly or wrapped in a key
         if isinstance(data, list):
             return pd.DataFrame(data)
-        for key in ("data", "plays", "events", "pbp"):
+        for key in ("rows", "data", "plays", "events", "pbp"):
             if key in data:
                 return pd.DataFrame(data[key])
         return pd.DataFrame(data)
 
     def _standardise(self, df: pd.DataFrame, season: str) -> pd.DataFrame:
-        """Rename API fields to canonical output schema."""
+        """Rename API fields to canonical output schema.
+
+        Handles two known API formats:
+          Old / documented: Event, Strength, "Player 1", GameID  (Title Case)
+          Current live API: event, strength, shooter, game_id    (snake_case)
+        """
         rename = {
+            # Title-case variants (original documented schema)
             "Event":    "event",
             "Strength": "strength",
             "Player 1": "player",
             "GameID":   "game_id",
+            # snake_case variants (current live API)
+            "shooter":  "player",
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
 
@@ -157,5 +167,33 @@ class CoordLoader:
             if col not in df.columns:
                 df[col] = None
 
+        # Normalise strength codes so CoordXGModel's PP flag works.
+        # Live API uses numeric strength strings ("5v5", "5v4", "4v5", …).
+        # We simplify: first number > second → "PP"; < → "SH"; equal → "EV".
+        if df["strength"].dtype == object:
+            df["strength"] = df["strength"].map(self._norm_strength).fillna("EV")
+
         df["season"] = season
         return df[["season", "game_id", "event", "strength", "player", "x", "y", "xG"]]
+
+    @staticmethod
+    def _norm_strength(s: str) -> str:
+        """Map numeric strength codes to PP / SH / EV / EN."""
+        if not isinstance(s, str):
+            return "EV"
+        s_up = s.upper()
+        if s_up.startswith("EN"):
+            return "EN"
+        parts = s_up.split("V")
+        if len(parts) == 2:
+            try:
+                a, b = int(parts[0]), int(parts[1])
+                if a > b:
+                    return "PP"
+                if a < b:
+                    return "SH"
+                return "EV"
+            except ValueError:
+                pass
+        # Already normalised ("PP", "SH", "EV") or unknown — return as-is
+        return s

@@ -40,10 +40,11 @@ from PIL import Image, ImageDraw, ImageOps
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pwhl_war.csv_loader  import PWHLCsvLoader
-from pwhl_war.box_war     import XGWar
-from pwhl_war.constants   import DEFAULT_MIN_TOI, DEFAULT_DEFENSE_WEIGHT, DEFAULT_BLOCK_WEIGHT
-from pwhl_war.io_utils    import load_blocks
+from pwhl_war.csv_loader   import PWHLCsvLoader
+from pwhl_war.box_war      import XGWar
+from pwhl_war.coord_loader import CoordLoader
+from pwhl_war.constants    import DEFAULT_MIN_TOI, DEFAULT_DEFENSE_WEIGHT, DEFAULT_BLOCK_WEIGHT, SEASON_CODES
+from pwhl_war.io_utils     import load_blocks
 
 HEADSHOT_DIR = Path("pwhl_war/data/raw/headshots")
 HEADSHOT_URL = "https://assets.leaguestat.com/pwhl/120x160/{player_id}.jpg"
@@ -332,8 +333,23 @@ def main() -> None:
     if not args.no_blocks:
         blocks = load_blocks(args.season)
 
+    # Fetch PBP coordinate data and train PWHL-native xG model.
+    # Falls back to CSV ixG silently if the API is unavailable.
+    seasons_to_fetch = (
+        [args.season] if args.season
+        else sorted(set(SEASON_CODES.values()))
+    )
+    log.info("=== Step 2a: Fetch PBP coordinate data (%s) ===",
+             ", ".join(seasons_to_fetch))
     try:
-        model.fit(game_data, schedule_df=schedule, blocks_df=blocks)
+        pbp = CoordLoader().fetch_pbp(seasons_to_fetch)
+        log.info("PBP rows fetched: %d", len(pbp))
+    except Exception as exc:
+        log.warning("PBP fetch failed (%s) — using CSV ixG fallback.", exc)
+        pbp = None
+
+    try:
+        model.fit(game_data, schedule_df=schedule, blocks_df=blocks, pbp_df=pbp)
     except Exception as exc:
         log.error("WAR failed: %s", exc)
         log.error("Try --min-toi 10 or --inspect to debug.")
