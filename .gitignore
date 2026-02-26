@@ -20,6 +20,8 @@ pwhl_war_vs_toi.png
 
 # Downloaded data cache (re-fetched on demand)
 pwhl_war/data/raw/hockeystats_*.xlsx
+Projects/PWHL_war/pwhl_war/data/raw/pbp_cache/
+Projects/PWHL_war/pwhl_war/data/raw/headshots/
 
 # Portfolio is a separate git repo
 portfolio/
