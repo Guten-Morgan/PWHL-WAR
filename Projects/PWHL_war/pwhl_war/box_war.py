@@ -356,13 +356,18 @@ class XGWar:
             "oWAR", "dWAR", "WAR", "war60",
             "o_replacement_val60", "d_replacement_val60", "goals_per_win",
         ] if c in df.columns]
-        return df[cols].rename(columns={
+        out = df[cols].rename(columns={
             "Team": "team",
             "PlayerID": "player_id",
             "Name": "name",
             "position": "pos",
             "GP": "gp",
         })
+        # Normalize granular position labels to F or D for downstream use
+        out["pos"] = out["pos"].str.upper().map(
+            lambda p: "D" if p in {"LD", "RD", "D"} else "F"
+        )
+        return out
 
     def summary(self, top_n: int = 25) -> None:
         df = self.get_war()
