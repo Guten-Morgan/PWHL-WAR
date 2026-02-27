@@ -84,3 +84,61 @@ def test_does_not_mutate_input(fixture_df):
         team_col="Team", defense_weight=0.36, sign=1,
     )
     pd.testing.assert_series_equal(fixture_df["pm60"], original_pm60)
+
+
+# ── Phase 10 diagnostic tests ─────────────────────────────────────────────────
+
+@pytest.fixture
+def three_team_df():
+    """
+    3-team 6-player fixture with clear between-team pm60 signal.
+    Team A (high pm60), Team B (medium), Team C (low).
+    Equal TOI and equal o_xG60 so OLS residual ≈ raw pm60 (slope near 0).
+    """
+    return pd.DataFrame({
+        "player_id": [1, 2, 3, 4, 5, 6],
+        "pm60":      [2.0, 1.0, 0.2, -0.2, -1.0, -2.0],
+        "o_xG60":    [0.5, 0.5, 0.5,  0.5,  0.5,  0.5],
+        "Team":      ["A", "A", "B",  "B",  "C",  "C"],
+        "toi_min":   [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+    })
+
+
+def test_team_centering_zeros_toi_weighted_team_sum(three_team_df):
+    """
+    With team_adjust=True, the TOI-weighted sum of d_value60 within each
+    team must be ~0.  This is the structural property that zeroes out
+    between-team defensive signal (Step 2 subtracts each team's mean).
+    """
+    qual_mask = three_team_df["toi_min"] >= 50.0
+    result = compute_defensive_value60(
+        three_team_df, qual_mask,
+        raw_col="pm60", off_col="o_xG60",
+        team_col="Team", defense_weight=0.36, sign=1,
+        team_adjust=True,
+    )
+    for team in ["A", "B", "C"]:
+        mask = result["Team"] == team
+        toi_wt_sum = (result.loc[mask, "d_value60"] * result.loc[mask, "toi_min"]).sum()
+        assert abs(toi_wt_sum) < 1e-8, (
+            f"Team {team}: TOI-weighted d_value60 sum = {toi_wt_sum} (expected ~0)"
+        )
+
+
+def test_no_team_centering_preserves_between_team_signal(three_team_df):
+    """
+    With team_adjust=False, between-team variance in d_value60 must be
+    non-zero — the raw pm60 signal (team A > B > C) is preserved.
+    """
+    qual_mask = three_team_df["toi_min"] >= 50.0
+    result = compute_defensive_value60(
+        three_team_df, qual_mask,
+        raw_col="pm60", off_col="o_xG60",
+        team_col="Team", defense_weight=0.36, sign=1,
+        team_adjust=False,
+    )
+    team_means = result.groupby("Team")["d_value60"].mean()
+    assert team_means.var() > 1e-6, (
+        f"Expected non-zero between-team variance with team_adjust=False, "
+        f"got team means: {team_means.to_dict()}"
+    )

@@ -209,15 +209,17 @@ class XGAWar:
         self,
         min_toi_min:     float = DEFAULT_MIN_TOI,
         replacement_pct: float = DEFAULT_REPLACEMENT,
-        defense_weight:  float = 0.039,
+        defense_weight:  float = 0.79,
         block_weight:    float = 0.04,
         goals_per_win:   float | None = None,
+        team_adjust:     bool  = False,
     ):
         self.min_toi_min     = min_toi_min
         self.replacement_pct = replacement_pct
         self.defense_weight  = defense_weight
         self.block_weight    = block_weight
         self._gpw_override   = goals_per_win
+        self.team_adjust     = team_adjust
 
         self.results_:              pd.DataFrame | None = None
         self.goals_per_win_:        float | None        = None
@@ -259,8 +261,16 @@ class XGAWar:
 
         qual_mask = df["toi_min"] >= self.min_toi_min
 
+        # Normalise FA60 to unit variance among qualified players so that
+        # defense_weight=0.12 is on the same scale as the Experiment 3 sweep.
+        fa60_std = df.loc[qual_mask, "FA60"].std()
+        if fa60_std > 1e-9:
+            df["FA60"] = df["FA60"] / fa60_std
+            log.info("FA60 normalised by std=%.4f", fa60_std)
+
         df = stats_utils.compute_defensive_value60(
-            df, qual_mask, "FA60", "ixG60", "team", self.defense_weight, sign=-1
+            df, qual_mask, "FA60", "ixG60", "team", self.defense_weight,
+            sign=-1, team_adjust=self.team_adjust,
         )
         # Preserve legacy column names for downstream consumers
         df["FA60_resid"] = df["_def_resid"]
@@ -359,6 +369,34 @@ class XGAWar:
                 if c in df.columns]
         print(df[show].head(top_n).to_string(index=False))
         print(f"{'='*68}\n")
+
+    # ------------------------------------------------------------------
+    # Class-level helper for external FA data loading
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def build_fa_season(
+        cls,
+        season: str,
+        loader: "PWHLApiLoader",
+    ) -> pd.DataFrame:
+        """
+        Fetch and aggregate per-player cumulative FA (shots against) for a season.
+
+        Returns a DataFrame with columns [player_id, FA, toi_min].
+        Used by box_war.XGWar to supply the FA-based defensive input when
+        the CSV game_data does not contain per-skater shots-against.
+
+        Parameters
+        ----------
+        season : e.g. "2023-24"
+        loader : PWHLApiLoader (handles caching)
+        """
+        game_ids, sched_map = loader.get_game_ids(season)
+        tmp = cls.__new__(cls)
+        tmp.min_toi_min = 0      # include every player so nothing is dropped
+        records = tmp._aggregate_games(game_ids, loader, sched_map)
+        return pd.DataFrame(records)[["player_id", "FA", "toi_min"]]
 
     # ------------------------------------------------------------------
     # Private helpers

@@ -106,6 +106,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 
 from . import stats_utils
+from .constants import DEFAULT_DEFENSE_WEIGHT
 from .coord_xg import CoordXGModel
 
 log = logging.getLogger(__name__)
@@ -136,14 +137,16 @@ class XGWar:
         min_toi_min:     float = DEFAULT_MIN_TOI,
         replacement_pct: float = DEFAULT_REPLACEMENT,
         goals_per_win:   float | None = None,
-        defense_weight:  float = 0.36,
+        defense_weight:  float = DEFAULT_DEFENSE_WEIGHT,
         block_weight:    float = 0.04,
+        team_adjust:     bool  = False,
     ):
         self.min_toi_min     = min_toi_min
         self.replacement_pct = replacement_pct
         self._gpw_override   = goals_per_win
         self.defense_weight  = defense_weight
         self.block_weight    = block_weight
+        self.team_adjust     = team_adjust
 
         self.results_:             pd.DataFrame | None = None
         self.o_replacement_val60_: float | None        = None
@@ -161,6 +164,7 @@ class XGWar:
         schedule_df:  pd.DataFrame | None = None,
         blocks_df:    pd.DataFrame | None = None,
         pbp_df:       pd.DataFrame | None = None,
+        fa_df:        pd.DataFrame | None = None,
     ) -> "XGWar":
         """
         Parameters
@@ -176,6 +180,11 @@ class XGWar:
                        (EV_ixG + PP_ixG + SH_ixG) for matched players.
                        Player names are matched case-insensitively (stripped).
                        Unmatched players fall back to the CSV ixG sum.
+        fa_df        : Optional DataFrame with columns [player_id, FA] from
+                       XGAWar.build_fa_season() — cumulative Fenwick Shots Against
+                       per player.  When provided, FA60 replaces pm60 as the
+                       defensive proxy (unit-variance normalised, sign=-1).
+                       Falls back to pm60 when None.
         """
         df = self._aggregate(game_data_df)
 
@@ -210,27 +219,42 @@ class XGWar:
 
         df["o_xG60"]    = df["total_ixG"] / df["toi_min"].clip(lower=0.1) * 60
 
-        # --- Defensive: residual plus/minus per 60 ---
+        # --- Defensive component ---
         #
+        # pm60 is always computed (useful for reference and fallback).
         # EV_xGA / PP_xGA / SH_xGA are only populated for goalies in this
-        # dataset; they are zero for all skaters.  We use plus/minus as a
-        # proxy, but first remove the linear relationship with o_xG60 via
-        # OLS regression on qualified players.
-        #
-        # This prevents high scorers from being rewarded twice: once in
-        # o_xG60 (shot generation) and again in d_value60 (being on ice
-        # when their shots become goals).  The residual captures on-ice
-        # goal differential unexplained by individual offensive output.
+        # dataset; they are zero for all skaters.
         df["pm60"] = df["plusMinus"] / df["toi_min"].clip(lower=0.1) * 60
 
         qual_mask = df["toi_min"] >= self.min_toi_min
 
-        df = stats_utils.compute_defensive_value60(
-            df, qual_mask, "pm60", "o_xG60", "Team", self.defense_weight, sign=1
-        )
-        # Preserve legacy column names for downstream consumers
-        df["pm60_resid"] = df["_def_resid"]
-        df["d_adj_pm60"] = df["_def_adj"]
+        if fa_df is not None and not fa_df.empty:
+            # Primary path: Fenwick Shots Against per 60 (from PBP API).
+            # Lower FA60 = fewer shots allowed = better defender → sign=-1.
+            # FA60 is normalised to unit variance among qualified players so
+            # defense_weight=0.12 is on the same scale as the Exp-3 sweep.
+            fa_map = fa_df.set_index("player_id")["FA"].to_dict()
+            df["_FA"] = df["PlayerID"].map(fa_map).fillna(0.0)
+            df["FA60"] = df["_FA"] / df["toi_min"].clip(lower=0.1) * 60
+            fa60_std = df.loc[qual_mask, "FA60"].std()
+            if fa60_std > 1e-9:
+                df["FA60"] = df["FA60"] / fa60_std
+                log.info("FA60 normalised by std=%.4f", fa60_std)
+            df = stats_utils.compute_defensive_value60(
+                df, qual_mask, "FA60", "o_xG60", "Team", self.defense_weight,
+                sign=-1, team_adjust=self.team_adjust,
+            )
+            df["FA60_resid"] = df["_def_resid"]
+            df["d_adj_FA60"] = df["_def_adj"]
+        else:
+            # Fallback: residual plus/minus per 60.
+            # Prevents high scorers from being rewarded twice via pm60.
+            df = stats_utils.compute_defensive_value60(
+                df, qual_mask, "pm60", "o_xG60", "Team", self.defense_weight,
+                sign=1, team_adjust=self.team_adjust,
+            )
+            df["pm60_resid"] = df["_def_resid"]
+            df["d_adj_pm60"] = df["_def_adj"]
 
         # --- Blocked shots (optional) ---
         if blocks_df is not None and not blocks_df.empty:
@@ -346,8 +370,9 @@ class XGWar:
             "Name", "PlayerID", "Team", "position", "GP", "toi_min",
             # Traditional stats
             "G", "A1", "A2", "plusMinus", "PIM",
-            # xG + defensive proxy metrics
-            "total_ixG", "pm60", "pm60_resid", "d_adj_pm60",
+            # xG + defensive proxy metrics (FA60 path or pm60 fallback)
+            "total_ixG", "pm60", "FA60", "FA60_resid", "d_adj_FA60",
+            "pm60_resid", "d_adj_pm60",
             "blocks60", "blocks60_adj", "block_val60",
             "o_xG60", "d_value60", "value60",
             # WAR components

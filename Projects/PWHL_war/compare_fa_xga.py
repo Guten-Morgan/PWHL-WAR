@@ -16,7 +16,17 @@ from scipy import stats
 from sklearn.linear_model import LinearRegression
 
 sys.path.insert(0, ".")
-from pwhl_war.xga_war    import PWHLApiLoader, XG_MAP, _parse_toi, _pid_from_url
+from pwhl_war.xga_war    import PWHLApiLoader, _parse_toi, _pid_from_url
+
+# XG_MAP was removed from xga_war.py in Phase 9 (replaced by API-native xG).
+# compare_fa_xga.py reads HockeyTech PBP events which carry shotQuality labels,
+# so the map is still needed here.
+XG_MAP = {
+    "Quality on net":     0.128,
+    "Quality goal":       0.128,
+    "Non quality on net": 0.051,
+    "Non quality goal":   0.051,
+}
 from pwhl_war.constants  import SEASON_YEARS, TEAM_MAP, DEFAULT_MIN_TOI, DEFAULT_REPLACEMENT_PCT
 
 logging.basicConfig(level=logging.WARNING)

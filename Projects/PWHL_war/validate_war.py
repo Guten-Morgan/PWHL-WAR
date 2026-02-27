@@ -124,7 +124,11 @@ def check_gpw_constants(standings_by_season: dict) -> None:
     for season, df in standings_by_season.items():
         if df.empty:
             continue
-        total_goals = df["GF"].sum() + df["GA"].sum()
+        # Each game appears as one row per team (home + away), so GF.sum() already
+        # equals the total goals scored across all games.  Do NOT add GA.sum() — that
+        # would double-count every goal.
+        # GPW = 2 × (avg goals per team per game) = 2 × GF.sum() / GP.sum()
+        total_goals = df["GF"].sum()
         n_team_games = df["GP"].sum()
         if n_team_games == 0:
             continue

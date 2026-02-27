@@ -42,8 +42,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pwhl_war.csv_loader   import PWHLCsvLoader
 from pwhl_war.box_war      import XGWar
+from pwhl_war.xga_war      import XGAWar, PWHLApiLoader
 from pwhl_war.coord_loader import CoordLoader
-from pwhl_war.constants    import DEFAULT_MIN_TOI, DEFAULT_DEFENSE_WEIGHT, DEFAULT_BLOCK_WEIGHT, SEASON_CODES
+from pwhl_war.constants    import DEFAULT_MIN_TOI, DEFAULT_DEFENSE_WEIGHT, DEFAULT_BLOCK_WEIGHT, SEASON_CODES, GPW
 from pwhl_war.io_utils     import load_blocks
 
 HEADSHOT_DIR = Path("pwhl_war/data/raw/headshots")
@@ -71,8 +72,8 @@ def parse_args() -> argparse.Namespace:
                    help="Minimum TOI in minutes to qualify (default 50).")
     p.add_argument("--replacement-pct", type=float, default=25.0,
                    help="Percentile defining replacement level (default 25).")
-    p.add_argument("--defense-weight",  type=float, default=0.36,
-                   help="Weight on defensive component 0-1 (default 0.36).")
+    p.add_argument("--defense-weight",  type=float, default=DEFAULT_DEFENSE_WEIGHT,
+                   help="Weight on defensive component (default 0.12 for FA60 normalised).")
     p.add_argument("--block-weight",   type=float, default=0.04,
                    help="xG value per position+team-adjusted block/60 (default 0.04).")
     p.add_argument("--no-blocks",      action="store_true",
@@ -306,7 +307,11 @@ def main() -> None:
 
     log.info("game_data rows: %d  |  schedule rows: %d", len(game_data), len(schedule))
 
-    season_label = args.season or "All Seasons"
+    season_label    = args.season or "All Seasons"
+    seasons_to_fetch = (
+        [args.season] if args.season
+        else sorted(set(SEASON_CODES.values()))
+    )
 
     # Sanity: confirm we have xG columns
     required = ["EV_ixG", "PP_ixG", "EV_xGA", "TOI"]
@@ -317,15 +322,42 @@ def main() -> None:
         sys.exit(1)
 
     # ------------------------------------------------------------------
+    # Step 1b: Load FA (Fenwick Shots Against) data via PBP API
+    # ------------------------------------------------------------------
+    log.info("=== Step 1b: Fetch FA data from PBP API (%s) ===",
+             args.season or "all seasons")
+    fa_loader = PWHLApiLoader(cache_dir=Path("pwhl_war/data/raw/pbp_cache"))
+    fa_frames = []
+    for s in seasons_to_fetch:
+        try:
+            fa_s = XGAWar.build_fa_season(s, fa_loader)
+            fa_frames.append(fa_s)
+            log.info("  %s: %d player records", s, len(fa_s))
+        except Exception as exc:
+            log.warning("  FA fetch failed for %s (%s) — will fall back to pm60", s, exc)
+    if fa_frames:
+        fa_df = pd.concat(fa_frames, ignore_index=True)
+        fa_df = fa_df.groupby("player_id", as_index=False)["FA"].sum()
+        log.info("FA data loaded: %d unique players", len(fa_df))
+    else:
+        fa_df = None
+        log.warning("No FA data — defensive proxy will fall back to pm60")
+
+    # ------------------------------------------------------------------
     # Step 2: Compute WAR
     # ------------------------------------------------------------------
     log.info("=== Step 2: Compute xG-WAR ===")
+
+    # Use pre-computed GPW constant when running a single season (schedule data
+    # may not carry per-game GF/GA, causing the fallback to trigger).
+    gpw_override = GPW.get(args.season) if args.season else None
 
     model = XGWar(
         min_toi_min    = args.min_toi,
         replacement_pct= args.replacement_pct,
         defense_weight = args.defense_weight,
         block_weight   = args.block_weight,
+        goals_per_win  = gpw_override,
     )
 
     # Load blocked-shots data (raw observed counts — no extrapolation).
@@ -335,10 +367,6 @@ def main() -> None:
 
     # Fetch PBP coordinate data and train PWHL-native xG model.
     # Falls back to CSV ixG silently if the API is unavailable.
-    seasons_to_fetch = (
-        [args.season] if args.season
-        else sorted(set(SEASON_CODES.values()))
-    )
     log.info("=== Step 2a: Fetch PBP coordinate data (%s) ===",
              ", ".join(seasons_to_fetch))
     try:
@@ -349,13 +377,14 @@ def main() -> None:
         pbp = None
 
     try:
-        model.fit(game_data, schedule_df=schedule, blocks_df=blocks, pbp_df=pbp)
+        model.fit(game_data, schedule_df=schedule, blocks_df=blocks, pbp_df=pbp, fa_df=fa_df)
     except Exception as exc:
         log.error("WAR failed: %s", exc)
         log.error("Try --min-toi 10 or --inspect to debug.")
         raise
 
     war_df = model.get_war()
+    war_df["Season"] = season_label
     model.summary(top_n=25)
 
     print(f"\nSeason summary ({season_label}):")

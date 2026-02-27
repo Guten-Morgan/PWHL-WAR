@@ -27,6 +27,7 @@ def compute_defensive_value60(
     team_col: str,
     defense_weight: float,
     sign: int = 1,
+    team_adjust: bool = True,
 ) -> pd.DataFrame:
     """
     4-step defensive adjustment pipeline.
@@ -39,7 +40,7 @@ def compute_defensive_value60(
 
     2. Team-quality adjust: subtract each team's TOI-weighted mean residual
        so the metric reflects individual vs. teammate comparison, not
-       team-quality effects.
+       team-quality effects.  Skipped when ``team_adjust=False``.
 
     3. League-mean adjust: subtract the league-wide TOI-weighted mean of
        team-adjusted residuals to produce a zero-centred metric.
@@ -55,6 +56,9 @@ def compute_defensive_value60(
     team_col       : name of the team column (e.g. "Team", "team")
     defense_weight : scaling factor applied to the adjusted metric
     sign           : +1 for pm60 (higher = better defense), -1 for FA60 (fewer = better)
+    team_adjust    : if True (default), subtract each team's TOI-weighted mean residual
+                     before league centering (Step 2).  Set False to preserve
+                     between-team signal for diagnostic experiments.
 
     Returns
     -------
@@ -74,17 +78,18 @@ def compute_defensive_value60(
         raw_col, off_col, reg.intercept_, reg.coef_[0],
     )
 
-    # Step 2: Team-quality adjustment
-    team_resid = (
-        df[qual_mask]
-        .groupby(team_col)["_def_resid"]
-        .apply(lambda g: np.average(
-            g, weights=df.loc[g.index, "toi_min"].clip(lower=0.1)
-        ))
-    )
-    df["_team_resid"] = df[team_col].map(team_resid).fillna(0)
-    df["_def_resid"]  = df["_def_resid"] - df["_team_resid"]
-    log.info("Team %s adjustments: %s", raw_col, team_resid.round(3).to_dict())
+    # Step 2: Team-quality adjustment (optional — skip to preserve between-team signal)
+    if team_adjust:
+        team_resid = (
+            df[qual_mask]
+            .groupby(team_col)["_def_resid"]
+            .apply(lambda g: np.average(
+                g, weights=df.loc[g.index, "toi_min"].clip(lower=0.1)
+            ))
+        )
+        df["_team_resid"] = df[team_col].map(team_resid).fillna(0)
+        df["_def_resid"]  = df["_def_resid"] - df["_team_resid"]
+        log.info("Team %s adjustments: %s", raw_col, team_resid.round(3).to_dict())
 
     # Step 3: League-mean adjust
     league_resid = np.average(
