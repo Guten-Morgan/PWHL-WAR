@@ -84,5 +84,5 @@ BLOCKS_FILES = {
 DEFAULT_MIN_TOI         = 50.0    # minutes; ~5 full games
 DEFAULT_REPLACEMENT_PCT = 25.0    # percentile defining replacement level
 GPW_FALLBACK            = 6.0     # goals-per-win when schedule data unavailable
-DEFAULT_DEFENSE_WEIGHT  = 0.79    # Exp-3 true optimum: normalised FA60, team_adjust=False (r=0.602, p=0.014)
+DEFAULT_DEFENSE_WEIGHT  = 1.40    # Exp-4 true optimum: normalised FA60, is_D+OZS% covariates, team_adjust=False (r=0.368, p=0.110)
 DEFAULT_BLOCK_WEIGHT    = 0.04    # xG value per position+team-adjusted block/60

@@ -28,6 +28,7 @@ def compute_defensive_value60(
     defense_weight: float,
     sign: int = 1,
     team_adjust: bool = True,
+    extra_covariates: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     4-step defensive adjustment pipeline.
@@ -37,6 +38,8 @@ def compute_defensive_value60(
     1. OLS residual: remove linear correlation between raw defensive metric
        and individual offensive output (players in offensive zone see fewer
        shots against; high scorers have inflated +/-).
+       When ``extra_covariates`` are provided (e.g. ["ozs_pct"]), a
+       multi-covariate OLS removes additional deployment biases.
 
     2. Team-quality adjust: subtract each team's TOI-weighted mean residual
        so the metric reflects individual vs. teammate comparison, not
@@ -49,16 +52,18 @@ def compute_defensive_value60(
 
     Parameters
     ----------
-    df             : player-level season DataFrame (must have `toi_min`)
-    qual_mask      : boolean Series indexing qualified players (toi_min >= threshold)
-    raw_col        : name of the raw defensive metric column (e.g. "pm60", "FA60")
-    off_col        : name of the individual offensive rate column (e.g. "o_xG60", "ixG60")
-    team_col       : name of the team column (e.g. "Team", "team")
-    defense_weight : scaling factor applied to the adjusted metric
-    sign           : +1 for pm60 (higher = better defense), -1 for FA60 (fewer = better)
-    team_adjust    : if True (default), subtract each team's TOI-weighted mean residual
-                     before league centering (Step 2).  Set False to preserve
-                     between-team signal for diagnostic experiments.
+    df               : player-level season DataFrame (must have `toi_min`)
+    qual_mask        : boolean Series indexing qualified players (toi_min >= threshold)
+    raw_col          : name of the raw defensive metric column (e.g. "pm60", "FA60")
+    off_col          : name of the individual offensive rate column (e.g. "o_xG60")
+    team_col         : name of the team column (e.g. "Team", "team")
+    defense_weight   : scaling factor applied to the adjusted metric
+    sign             : +1 for pm60 (higher = better defense), -1 for FA60 (fewer = better)
+    team_adjust      : if True (default), subtract each team's TOI-weighted mean residual
+                       before league centering (Step 2).
+    extra_covariates : additional column names to include in the OLS fit alongside
+                       ``off_col`` (e.g. ["ozs_pct"]).  Backward-compatible: None
+                       reverts to single-covariate behaviour identical to the original.
 
     Returns
     -------
@@ -67,16 +72,26 @@ def compute_defensive_value60(
     df = df.copy()
     qual_fit = df[qual_mask]
 
-    # Step 1: OLS residual
+    # Step 1: OLS residual (single- or multi-covariate)
+    feat_cols = [off_col] + (extra_covariates or [])
     reg = LinearRegression().fit(
-        qual_fit[[off_col]].values,
+        qual_fit[feat_cols].values,
         qual_fit[raw_col].values,
     )
-    df["_def_resid"] = df[raw_col] - (reg.intercept_ + reg.coef_[0] * df[off_col])
-    log.info(
-        "%s ~ %s: intercept=%.3f slope=%.3f",
-        raw_col, off_col, reg.intercept_, reg.coef_[0],
-    )
+    df["_def_resid"] = df[raw_col] - reg.predict(df[feat_cols].values)
+    if extra_covariates:
+        coef_str = ", ".join(
+            f"{c}={v:.3f}" for c, v in zip(feat_cols, reg.coef_)
+        )
+        log.info(
+            "%s ~ [%s]: intercept=%.3f  coefs: %s",
+            raw_col, ", ".join(feat_cols), reg.intercept_, coef_str,
+        )
+    else:
+        log.info(
+            "%s ~ %s: intercept=%.3f slope=%.3f",
+            raw_col, off_col, reg.intercept_, reg.coef_[0],
+        )
 
     # Step 2: Team-quality adjustment (optional — skip to preserve between-team signal)
     if team_adjust:

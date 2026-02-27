@@ -365,6 +365,28 @@ def main() -> None:
     if not args.no_blocks:
         blocks = load_blocks(args.season)
 
+    # ------------------------------------------------------------------
+    # Step 1c: Load OZS% data (offensive zone start percentage from PBP faceoffs)
+    # ------------------------------------------------------------------
+    log.info("=== Step 1c: Load OZS%% data (%s) ===", args.season or "all seasons")
+    ozs_frames = []
+    for s in seasons_to_fetch:
+        ozs_path = Path("pwhl_war/data/raw") / f"ozs_{s}.csv"
+        if ozs_path.exists():
+            ozs_s = pd.read_csv(ozs_path)
+            ozs_frames.append(ozs_s[["player_id", "ozs_pct"]])
+            log.info("  OZS%% loaded: %s (%d players)", s, len(ozs_s))
+        else:
+            log.warning("  OZS%% file not found for %s: %s — skipping", s, ozs_path)
+    if ozs_frames:
+        ozs_df = pd.concat(ozs_frames, ignore_index=True)
+        # If multi-season, keep the season-averaged ozs_pct per player
+        ozs_df = ozs_df.groupby("player_id", as_index=False)["ozs_pct"].mean()
+        log.info("OZS%% data loaded: %d unique players", len(ozs_df))
+    else:
+        ozs_df = None
+        log.warning("No OZS%% data — deployment bias will rely on o_xG60 alone")
+
     # Fetch PBP coordinate data and train PWHL-native xG model.
     # Falls back to CSV ixG silently if the API is unavailable.
     log.info("=== Step 2a: Fetch PBP coordinate data (%s) ===",
@@ -377,7 +399,7 @@ def main() -> None:
         pbp = None
 
     try:
-        model.fit(game_data, schedule_df=schedule, blocks_df=blocks, pbp_df=pbp, fa_df=fa_df)
+        model.fit(game_data, schedule_df=schedule, blocks_df=blocks, pbp_df=pbp, fa_df=fa_df, ozs_df=ozs_df)
     except Exception as exc:
         log.error("WAR failed: %s", exc)
         log.error("Try --min-toi 10 or --inspect to debug.")

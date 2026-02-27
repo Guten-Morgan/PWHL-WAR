@@ -165,6 +165,7 @@ class XGWar:
         blocks_df:    pd.DataFrame | None = None,
         pbp_df:       pd.DataFrame | None = None,
         fa_df:        pd.DataFrame | None = None,
+        ozs_df:       pd.DataFrame | None = None,
     ) -> "XGWar":
         """
         Parameters
@@ -185,6 +186,12 @@ class XGWar:
                        per player.  When provided, FA60 replaces pm60 as the
                        defensive proxy (unit-variance normalised, sign=-1).
                        Falls back to pm60 when None.
+        ozs_df       : Optional DataFrame with columns [player_id, ozs_pct] from
+                       extract_ozs.py.  When provided, ozs_pct is added as a
+                       second covariate in the OLS deployment-bias correction
+                       (alongside o_xG60), reducing the oWAR/dWAR correlation
+                       caused by offensive-zone deployment.  Players not matched
+                       in ozs_df receive the league-mean ozs_pct.
         """
         df = self._aggregate(game_data_df)
 
@@ -232,7 +239,7 @@ class XGWar:
             # Primary path: Fenwick Shots Against per 60 (from PBP API).
             # Lower FA60 = fewer shots allowed = better defender → sign=-1.
             # FA60 is normalised to unit variance among qualified players so
-            # defense_weight=0.12 is on the same scale as the Exp-3 sweep.
+            # defense_weight is on the same scale as the Exp-3 sweep.
             fa_map = fa_df.set_index("player_id")["FA"].to_dict()
             df["_FA"] = df["PlayerID"].map(fa_map).fillna(0.0)
             df["FA60"] = df["_FA"] / df["toi_min"].clip(lower=0.1) * 60
@@ -240,9 +247,31 @@ class XGWar:
             if fa60_std > 1e-9:
                 df["FA60"] = df["FA60"] / fa60_std
                 log.info("FA60 normalised by std=%.4f", fa60_std)
+
+            # Position dummy: D face more shots by nature of their role.
+            # Adding is_D to the OLS removes the systematic positional baseline
+            # difference in FA60 so defensemen aren't penalized for playing defense.
+            df["is_D"] = df["position"].str.upper().map(
+                lambda p: 1.0 if p in {"LD", "RD", "D"} else 0.0
+            )
+            extra_covs: list[str] = ["is_D"]
+
+            # OZS% covariate: optional third OLS predictor for deployment bias
+            if ozs_df is not None and not ozs_df.empty:
+                ozs_map = ozs_df.set_index("player_id")["ozs_pct"].to_dict()
+                df["ozs_pct"] = df["PlayerID"].map(ozs_map)
+                league_ozs = df.loc[qual_mask, "ozs_pct"].mean()
+                df["ozs_pct"] = df["ozs_pct"].fillna(league_ozs)
+                extra_covs.append("ozs_pct")
+                log.info(
+                    "OZS%% covariate added: %d matched (league mean=%.3f)",
+                    df["ozs_pct"].notna().sum(), league_ozs,
+                )
+
             df = stats_utils.compute_defensive_value60(
                 df, qual_mask, "FA60", "o_xG60", "Team", self.defense_weight,
                 sign=-1, team_adjust=self.team_adjust,
+                extra_covariates=extra_covs,
             )
             df["FA60_resid"] = df["_def_resid"]
             df["d_adj_FA60"] = df["_def_adj"]
@@ -373,6 +402,7 @@ class XGWar:
             # xG + defensive proxy metrics (FA60 path or pm60 fallback)
             "total_ixG", "pm60", "FA60", "FA60_resid", "d_adj_FA60",
             "pm60_resid", "d_adj_pm60",
+            "ozs_pct",
             "blocks60", "blocks60_adj", "block_val60",
             "o_xG60", "d_value60", "value60",
             # WAR components
