@@ -322,26 +322,41 @@ def main() -> None:
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Step 1b: Load FA (Fenwick Shots Against) data via PBP API
+    # Step 1b: Fetch PBP coordinate data (used for both oWAR and xGA defense)
     # ------------------------------------------------------------------
-    log.info("=== Step 1b: Fetch FA data from PBP API (%s) ===",
+    log.info("=== Step 1b: Fetch PBP coordinate data (%s) ===",
+             ", ".join(seasons_to_fetch))
+    try:
+        pbp = CoordLoader().fetch_pbp(seasons_to_fetch)
+        log.info("PBP rows fetched: %d", len(pbp))
+    except Exception as exc:
+        log.warning("PBP fetch failed (%s) — using CSV ixG fallback for oWAR; "
+                    "xGA defense will fall back to shot counts.", exc)
+        pbp = None
+
+    # ------------------------------------------------------------------
+    # Step 1c: Load xGA (xG Against) data via PBP API (uses coord_df for xG)
+    # ------------------------------------------------------------------
+    log.info("=== Step 1c: Fetch xGA data from PBP API (%s) ===",
              args.season or "all seasons")
     fa_loader = PWHLApiLoader(cache_dir=Path("pwhl_war/data/raw/pbp_cache"))
     fa_frames = []
     for s in seasons_to_fetch:
         try:
-            fa_s = XGAWar.build_fa_season(s, fa_loader)
+            # Pass per-season coord slice for continuous xG; falls back to shot counts if None
+            coord_s = pbp[pbp["season"] == s] if pbp is not None else None
+            fa_s = XGAWar.build_fa_season(s, fa_loader, coord_df=coord_s)
             fa_frames.append(fa_s)
             log.info("  %s: %d player records", s, len(fa_s))
         except Exception as exc:
-            log.warning("  FA fetch failed for %s (%s) — will fall back to pm60", s, exc)
+            log.warning("  xGA fetch failed for %s (%s) — will fall back to pm60", s, exc)
     if fa_frames:
         fa_df = pd.concat(fa_frames, ignore_index=True)
-        fa_df = fa_df.groupby("player_id", as_index=False)["FA"].sum()
-        log.info("FA data loaded: %d unique players", len(fa_df))
+        fa_df = fa_df.groupby("player_id", as_index=False)["xGA"].sum()
+        log.info("xGA data loaded: %d unique players", len(fa_df))
     else:
         fa_df = None
-        log.warning("No FA data — defensive proxy will fall back to pm60")
+        log.warning("No xGA data — defensive proxy will fall back to pm60")
 
     # ------------------------------------------------------------------
     # Step 2: Compute WAR
@@ -366,9 +381,9 @@ def main() -> None:
         blocks = load_blocks(args.season)
 
     # ------------------------------------------------------------------
-    # Step 1c: Load OZS% data (offensive zone start percentage from PBP faceoffs)
+    # Step 1d: Load OZS% data (offensive zone start percentage from PBP faceoffs)
     # ------------------------------------------------------------------
-    log.info("=== Step 1c: Load OZS%% data (%s) ===", args.season or "all seasons")
+    log.info("=== Step 1d: Load OZS%% data (%s) ===", args.season or "all seasons")
     ozs_frames = []
     for s in seasons_to_fetch:
         ozs_path = Path("pwhl_war/data/raw") / f"ozs_{s}.csv"
@@ -386,17 +401,6 @@ def main() -> None:
     else:
         ozs_df = None
         log.warning("No OZS%% data — deployment bias will rely on o_xG60 alone")
-
-    # Fetch PBP coordinate data and train PWHL-native xG model.
-    # Falls back to CSV ixG silently if the API is unavailable.
-    log.info("=== Step 2a: Fetch PBP coordinate data (%s) ===",
-             ", ".join(seasons_to_fetch))
-    try:
-        pbp = CoordLoader().fetch_pbp(seasons_to_fetch)
-        log.info("PBP rows fetched: %d", len(pbp))
-    except Exception as exc:
-        log.warning("PBP fetch failed (%s) — using CSV ixG fallback.", exc)
-        pbp = None
 
     try:
         model.fit(game_data, schedule_df=schedule, blocks_df=blocks, pbp_df=pbp, fa_df=fa_df, ozs_df=ozs_df)

@@ -1,12 +1,15 @@
 """
 xga_war.py
 ----------
-WAR for PWHL skaters using Fenwick Shots Against (FA) as the defensive
-component.  FA was chosen over xGA after a YtY stability test showed
-FA-dWAR is more repeatable (Spearman r=0.247, p=0.015) than xGA-dWAR
-(r=0.174, p=0.088) across the 2023-24 to 2024-25 transition.  The
-binary quality labels in the PWHL API add noise rather than signal for
-the defensive metric; raw shot counts are cleaner.
+WAR for PWHL skaters using xG Against (xGA) as the defensive component.
+Defensive metric: xGA60 (xG-weighted shots against, attributed by TOI
+share).  Continuous xG from the PWHL season-level PBP API is used when
+available (via coord_df from CoordLoader); falls back to raw shot counts
+when not provided.  Re-tuned as Exp-5.
+
+Prior FA docstring note (FA chosen over xGA, r=0.247 vs 0.174) was based
+on a binary XG_MAP approximation, not continuous API xG — result does not
+apply to the Exp-5 metric.
 
 Data source: pwhl.hockey-statistics.com API (play-by-play + game summaries)
 
@@ -379,24 +382,28 @@ class XGAWar:
         cls,
         season: str,
         loader: "PWHLApiLoader",
+        coord_df: "pd.DataFrame | None" = None,
     ) -> pd.DataFrame:
         """
-        Fetch and aggregate per-player cumulative FA (shots against) for a season.
+        Fetch and aggregate per-player cumulative xGA (xG against) for a season.
 
-        Returns a DataFrame with columns [player_id, FA, toi_min].
-        Used by box_war.XGWar to supply the FA-based defensive input when
-        the CSV game_data does not contain per-skater shots-against.
+        Returns a DataFrame with columns [player_id, xGA, toi_min].
+        Used by box_war.XGWar to supply the xGA-based defensive input.
 
         Parameters
         ----------
-        season : e.g. "2023-24"
-        loader : PWHLApiLoader (handles caching)
+        season   : e.g. "2023-24"
+        loader   : PWHLApiLoader (handles caching)
+        coord_df : optional season-level PBP DataFrame from CoordLoader.fetch_pbp()
+                   with columns [game_id, player, xG].  When provided, continuous
+                   per-shot xG from the PWHL API is used for team xGA attribution.
+                   When None, falls back to raw shot counts (FA).
         """
         game_ids, sched_map = loader.get_game_ids(season)
         tmp = cls.__new__(cls)
         tmp.min_toi_min = 0      # include every player so nothing is dropped
-        records = tmp._aggregate_games(game_ids, loader, sched_map)
-        return pd.DataFrame(records)[["player_id", "FA", "toi_min"]]
+        records = tmp._aggregate_games(game_ids, loader, sched_map, coord_df=coord_df)
+        return pd.DataFrame(records)[["player_id", "xGA", "toi_min"]]
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -407,6 +414,7 @@ class XGAWar:
         game_ids:  list[int],
         loader:    PWHLApiLoader,
         sched_map: dict,
+        coord_df:  "pd.DataFrame | None" = None,
     ) -> list[dict]:
         """Process each game's PBP + summary into player-level season totals."""
 
@@ -481,35 +489,61 @@ class XGAWar:
             if away_tid and away_tid in tid_to_abbr:
                 away_abbr = tid_to_abbr[away_tid]
 
-            # --- Team FA (shot count) and individual ixG from shot events ---
-            team_FA_for: dict[str, float] = {}   # shot counts against each team
-            player_ixG:  dict[int, float] = {}   # xG-weighted, for oWAR (unchanged)
+            # --- Team xGA (or FA fallback) and individual ixG from shot events ---
+            team_xGA_for: dict[str, float] = {}  # keyed by shooting team ID
+            player_ixG:   dict[int, float] = {}  # xG-weighted, for oWAR (unchanged)
 
             for e in pbp:
                 if e.get("event") != "shot":
                     continue
                 d   = e["details"]
                 q   = d.get("shotQuality", "")
-                xg  = float(d.get("xG") or 0.0)  # API-native; 0.0 for null/missing
+                xg  = float(d.get("xG") or 0.0)  # 0.0 from per-game cache; kept for future
                 tid = str(d.get("shooterTeamId", ""))
                 pid = d.get("shooter", {}).get("id")
                 if not q:
                     continue   # skip events with no quality label
-                # Defense: raw shot count (FA), not xG-weighted
-                team_FA_for[tid] = team_FA_for.get(tid, 0.0) + 1.0
-                # Offense: API-native xG for individual oWAR
+                # Offense: API-native xG for individual oWAR (0.0 from cache)
                 if xg > 0.0 and pid:
                     player_ixG[pid] = player_ixG.get(pid, 0.0) + xg
                 if "goal" in q:
                     total_goals += 1
+                # Defense fallback: raw shot count when coord_df unavailable
+                if coord_df is None and tid:
+                    team_xGA_for[tid] = team_xGA_for.get(tid, 0.0) + 1.0
 
-            home_FA = team_FA_for.get(away_tid, 0.0)   # shots on home goalie
-            away_FA = team_FA_for.get(home_tid, 0.0)   # shots on away goalie
+            # If coord_df available: replace shot counts with continuous xGA
+            # from PWHL season-level PBP API (name-matched to game summary).
+            if coord_df is not None and not coord_df.empty:
+                game_coord = coord_df[coord_df["game_id"] == str(gid)]
+                if not game_coord.empty:
+                    home_names = {
+                        s.get("name", "").lower().strip()
+                        for s in summ.get("homeTeam", {}).get("skaters", [])
+                    }
+                    away_names = {
+                        s.get("name", "").lower().strip()
+                        for s in summ.get("visitingTeam", {}).get("skaters", [])
+                    }
+                    gc_lower = game_coord["player"].str.lower().str.strip()
+                    # Shots by away team → home team's xGA (key = away_tid to mirror FA logic)
+                    if away_tid:
+                        team_xGA_for[away_tid] = float(
+                            game_coord[gc_lower.isin(away_names)]["xG"].sum()
+                        )
+                    # Shots by home team → away team's xGA (key = home_tid)
+                    if home_tid:
+                        team_xGA_for[home_tid] = float(
+                            game_coord[gc_lower.isin(home_names)]["xG"].sum()
+                        )
 
-            # --- Parse player TOI from summary and attribute FA ---
-            for side, team_abbr, team_FA in [
-                ("homeTeam",     home_abbr, home_FA),
-                ("visitingTeam", away_abbr, away_FA),
+            home_xGA = team_xGA_for.get(away_tid, 0.0)   # xGA for home team
+            away_xGA = team_xGA_for.get(home_tid, 0.0)   # xGA for away team
+
+            # --- Parse player TOI from summary and attribute xGA ---
+            for side, team_abbr, team_xGA in [
+                ("homeTeam",     home_abbr, home_xGA),
+                ("visitingTeam", away_abbr, away_xGA),
             ]:
                 skaters = summ.get(side, {}).get("skaters", [])
                 skater_tois: list[tuple[int, float, str, str]] = []
@@ -539,13 +573,13 @@ class XGAWar:
                             "pos":  pos,
                             "team": team_abbr,
                             "gp": 0, "toi_min": 0.0,
-                            "ixG": 0.0, "FA": 0.0,
+                            "ixG": 0.0, "xGA": 0.0,
                         }
                     p = players[key]
                     p["gp"]      += 1
                     p["toi_min"] += toi
                     p["ixG"]     += player_ixG.get(pid, 0.0)
-                    p["FA"]      += team_FA * (toi / team_total_toi)
+                    p["xGA"]     += team_xGA * (toi / team_total_toi)
 
         self._total_goals  = total_goals
         self._n_team_games = n_team_games

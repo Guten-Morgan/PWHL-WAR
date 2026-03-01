@@ -236,21 +236,21 @@ class XGWar:
         qual_mask = df["toi_min"] >= self.min_toi_min
 
         if fa_df is not None and not fa_df.empty:
-            # Primary path: Fenwick Shots Against per 60 (from PBP API).
-            # Lower FA60 = fewer shots allowed = better defender → sign=-1.
-            # FA60 is normalised to unit variance among qualified players so
-            # defense_weight is on the same scale as the Exp-3 sweep.
-            fa_map = fa_df.set_index("player_id")["FA"].to_dict()
-            df["_FA"] = df["PlayerID"].map(fa_map).fillna(0.0)
-            df["FA60"] = df["_FA"] / df["toi_min"].clip(lower=0.1) * 60
-            fa60_std = df.loc[qual_mask, "FA60"].std()
-            if fa60_std > 1e-9:
-                df["FA60"] = df["FA60"] / fa60_std
-                log.info("FA60 normalised by std=%.4f", fa60_std)
+            # Primary path: Expected Goals Against per 60 (xGA60, from PBP API).
+            # Lower xGA60 = fewer expected goals allowed = better defender → sign=-1.
+            # xGA60 is normalised to unit variance among qualified players so
+            # defense_weight is on the same scale across experiments (Exp-5).
+            fa_map = fa_df.set_index("player_id")["xGA"].to_dict()
+            df["_xGA"] = df["PlayerID"].map(fa_map).fillna(0.0)
+            df["xGA60"] = df["_xGA"] / df["toi_min"].clip(lower=0.1) * 60
+            xGA60_std = df.loc[qual_mask, "xGA60"].std()
+            if xGA60_std > 1e-9:
+                df["xGA60"] = df["xGA60"] / xGA60_std
+                log.info("xGA60 normalised by std=%.4f", xGA60_std)
 
             # Position dummy: D face more shots by nature of their role.
             # Adding is_D to the OLS removes the systematic positional baseline
-            # difference in FA60 so defensemen aren't penalized for playing defense.
+            # difference in xGA60 so defensemen aren't penalized for playing defense.
             df["is_D"] = df["position"].str.upper().map(
                 lambda p: 1.0 if p in {"LD", "RD", "D"} else 0.0
             )
@@ -269,12 +269,12 @@ class XGWar:
                 )
 
             df = stats_utils.compute_defensive_value60(
-                df, qual_mask, "FA60", "o_xG60", "Team", self.defense_weight,
+                df, qual_mask, "xGA60", "o_xG60", "Team", self.defense_weight,
                 sign=-1, team_adjust=self.team_adjust,
                 extra_covariates=extra_covs,
             )
-            df["FA60_resid"] = df["_def_resid"]
-            df["d_adj_FA60"] = df["_def_adj"]
+            df["xGA60_resid"] = df["_def_resid"]
+            df["d_adj_xGA60"] = df["_def_adj"]
         else:
             # Fallback: residual plus/minus per 60.
             # Prevents high scorers from being rewarded twice via pm60.
@@ -399,8 +399,8 @@ class XGWar:
             "Name", "PlayerID", "Team", "position", "GP", "toi_min",
             # Traditional stats
             "G", "A1", "A2", "plusMinus", "PIM",
-            # xG + defensive proxy metrics (FA60 path or pm60 fallback)
-            "total_ixG", "pm60", "FA60", "FA60_resid", "d_adj_FA60",
+            # xG + defensive proxy metrics (xGA60 path or pm60 fallback)
+            "total_ixG", "pm60", "xGA60", "xGA60_resid", "d_adj_xGA60",
             "pm60_resid", "d_adj_pm60",
             "ozs_pct",
             "blocks60", "blocks60_adj", "block_val60",

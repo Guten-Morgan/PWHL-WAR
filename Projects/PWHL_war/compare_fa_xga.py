@@ -18,9 +18,8 @@ from sklearn.linear_model import LinearRegression
 sys.path.insert(0, ".")
 from pwhl_war.xga_war    import PWHLApiLoader, _parse_toi, _pid_from_url
 
-# XG_MAP was removed from xga_war.py in Phase 9 (replaced by API-native xG).
-# compare_fa_xga.py reads HockeyTech PBP events which carry shotQuality labels,
-# so the map is still needed here.
+# XG_MAP is used only for the FA path's individual player_ixG tracker.
+# The xGA branch now uses the API-native continuous xG float directly.
 XG_MAP = {
     "Quality on net":     0.128,
     "Quality goal":       0.128,
@@ -61,7 +60,13 @@ def get_season_games(season):
     return games, sched
 
 
-def aggregate_games(game_ids, sched_map, use_fa=False):
+def aggregate_games(game_ids, sched_map, use_fa=False, coord_df=None):
+    """
+    Aggregate per-player season totals.
+
+    FA path  (use_fa=True) : raw shot counts for team defense; XG_MAP for player_ixG
+    xGA path (use_fa=False): continuous xG from coord_df (CoordLoader) for team defense
+    """
     players = {}
     total_goals = n_team_games = 0
 
@@ -113,20 +118,36 @@ def aggregate_games(game_ids, sched_map, use_fa=False):
             if e.get("event") != "shot": continue
             d   = e["details"]
             q   = d.get("shotQuality","")
-            xg  = XG_MAP.get(q, 0.0)
             tid = str(d.get("shooterTeamId",""))
             pid = d.get("shooter",{}).get("id")
 
             if use_fa:
                 if not q: continue          # skip events with no quality label
+                xg = XG_MAP.get(q, 0.0)    # binary quality estimate for player_ixG
                 team_def[tid] = team_def.get(tid, 0.0) + 1.0
                 if pid: player_ixG[pid] = player_ixG.get(pid, 0.0) + xg
-            else:
-                if xg == 0.0: continue
-                team_def[tid] = team_def.get(tid, 0.0) + xg
-                if pid: player_ixG[pid] = player_ixG.get(pid, 0.0) + xg
-
+            # xGA path: team_def filled from coord_df below; only count goals here
             if "goal" in q: total_goals += 1
+
+        # xGA path: use CoordLoader data for continuous xG team attribution
+        if not use_fa and coord_df is not None and not coord_df.empty:
+            game_coord = coord_df[coord_df["game_id"] == str(gid)]
+            if not game_coord.empty:
+                home_names = {s.get("name","").lower().strip()
+                              for s in summ.get("homeTeam",{}).get("skaters",[])}
+                away_names = {s.get("name","").lower().strip()
+                              for s in summ.get("visitingTeam",{}).get("skaters",[])}
+                gc_lower = game_coord["player"].str.lower().str.strip()
+                # Away shots → home xGA (keyed by away_tid to match FA lookup)
+                if away_tid:
+                    team_def[away_tid] = float(
+                        game_coord[gc_lower.isin(away_names)]["xG"].sum()
+                    )
+                # Home shots → away xGA (keyed by home_tid)
+                if home_tid:
+                    team_def[home_tid] = float(
+                        game_coord[gc_lower.isin(home_names)]["xG"].sum()
+                    )
 
         home_def = team_def.get(away_tid, 0.0)
         away_def = team_def.get(home_tid, 0.0)
@@ -196,15 +217,26 @@ if __name__ == "__main__":
     # ---------------------------------------------------------------------------
     # Run
     # ---------------------------------------------------------------------------
+    from pwhl_war.coord_loader import CoordLoader
+
     seasons = ["2023-24","2024-25","2025-26"]
     xga_frames, fa_frames = [], []
+
+    print("Pre-fetching PWHL API PBP (continuous xG) for all seasons...")
+    try:
+        all_coord_df = CoordLoader().fetch_pbp(seasons)
+        print(f"  {len(all_coord_df)} shot events loaded")
+    except Exception as exc:
+        print(f"  [warn] CoordLoader failed ({exc}) — xGA path will have no data")
+        all_coord_df = None
 
     for s in seasons:
         print(f"Processing {s} ...", end=" ", flush=True)
         game_ids, sched = get_season_games(s)
         print(f"{len(game_ids)} games")
 
-        rec_xga, tg, ng = aggregate_games(game_ids, sched, use_fa=False)
+        coord_s = all_coord_df[all_coord_df["season"] == s] if all_coord_df is not None else None
+        rec_xga, tg, ng = aggregate_games(game_ids, sched, use_fa=False, coord_df=coord_s)
         rec_fa,  _,  _  = aggregate_games(game_ids, sched, use_fa=True)
         gpw = 2 * (tg / ng) if ng > 0 else 6.0
 

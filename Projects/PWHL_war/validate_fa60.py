@@ -1,7 +1,7 @@
 """
 validate_fa60.py
 ----------------
-Full model validation — FA60 + is_D, no blocks, no OZS%
+Full model validation — xGA60 + is_D, no blocks, no OZS%
 
 Tests:
   1. Team WAR vs team goal differential  (primary external validity check)
@@ -41,7 +41,7 @@ RAW       = BASE / "pwhl_war/data/raw"
 SEASONS     = ["2023-24", "2024-25", "2025-26"]
 MIN_TOI     = {"2023-24": 50,  "2024-25": 50,  "2025-26": 25}
 DISPLAY_TOI = {"2023-24": 100, "2024-25": 100, "2025-26": 50}
-DEF_W       = 1.40
+DEF_W       = 0.10
 
 SEP  = "=" * 72
 SEP2 = "-" * 60
@@ -66,15 +66,15 @@ for season in SEASONS:
         schedule  = csv_loader.get_schedule(season=season)
 
     try:
-        fa_df = XGAWar.build_fa_season(season, fa_loader)
-    except Exception as e:
-        print(f"\n  [warn] FA failed for {season}: {e}")
-        fa_df = None
-
-    try:
         pbp_df = CoordLoader().fetch_pbp([season])
     except Exception:
         pbp_df = None
+
+    try:
+        fa_df = XGAWar.build_fa_season(season, fa_loader, coord_df=pbp_df)
+    except Exception as e:
+        print(f"\n  [warn] xGA build failed for {season}: {e}")
+        fa_df = None
 
     season_data[season] = dict(
         game_data=game_data, schedule=schedule,
@@ -264,7 +264,7 @@ if team_rows:
 # PART 1b: defense_weight sweep vs Pts
 # ---------------------------------------------------------------------------
 print(f"\n{SEP}")
-print(f"  PART 1b: defense_weight sweep vs Points  (FA60 + is_D only)")
+print(f"  PART 1b: defense_weight sweep vs Points  (xGA60 + is_D only)")
 print(SEP)
 
 valid_seasons = [s for s in SEASONS if not standings[s].empty]
@@ -297,7 +297,7 @@ if sweep_results:
               "  ← current" if abs(w - DEF_W) < 0.01 else "")
         print(f"  {w:8.2f}  {r:+10.3f}  {p:8.4f}{tag}")
     print(f"\n  Best: defense_weight={best[0]}  r={best[1]:+.3f}  p={best[2]:.4f}")
-    print(f"  Current (Exp-4): defense_weight={DEF_W}  "
+    print(f"  Current (Exp-5): defense_weight={DEF_W}  "
           f"r={dict((w, r) for w, r, p, n in sweep_results).get(DEF_W, float('nan')):+.3f}")
 
 
