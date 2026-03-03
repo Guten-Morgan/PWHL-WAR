@@ -270,7 +270,7 @@ class XGWar:
 
             df = stats_utils.compute_defensive_value60(
                 df, qual_mask, "xGA60", "o_xG60", "Team", self.defense_weight,
-                sign=-1, team_adjust=self.team_adjust,
+                team_adjust=self.team_adjust,
                 extra_covariates=extra_covs,
             )
             df["xGA60_resid"] = df["_def_resid"]
@@ -280,7 +280,7 @@ class XGWar:
             # Prevents high scorers from being rewarded twice via pm60.
             df = stats_utils.compute_defensive_value60(
                 df, qual_mask, "pm60", "o_xG60", "Team", self.defense_weight,
-                sign=1, team_adjust=self.team_adjust,
+                team_adjust=self.team_adjust,
             )
             df["pm60_resid"] = df["_def_resid"]
             df["d_adj_pm60"] = df["_def_adj"]

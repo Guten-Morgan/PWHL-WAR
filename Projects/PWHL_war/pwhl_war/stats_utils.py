@@ -26,7 +26,6 @@ def compute_defensive_value60(
     off_col: str,
     team_col: str,
     defense_weight: float,
-    sign: int = 1,
     team_adjust: bool = True,
     extra_covariates: list[str] | None = None,
 ) -> pd.DataFrame:
@@ -48,17 +47,20 @@ def compute_defensive_value60(
     3. League-mean adjust: subtract the league-wide TOI-weighted mean of
        team-adjusted residuals to produce a zero-centred metric.
 
-    4. Scale: multiply by `defense_weight` (and `sign`) to produce `d_value60`.
+    4. Scale: multiply by `defense_weight` to produce `d_value60`.
+       Use a negative weight when a higher raw metric means worse defense
+       (e.g. xGA60, FA60: more shots/xG against → negative d_value60).
 
     Parameters
     ----------
     df               : player-level season DataFrame (must have `toi_min`)
     qual_mask        : boolean Series indexing qualified players (toi_min >= threshold)
-    raw_col          : name of the raw defensive metric column (e.g. "pm60", "FA60")
+    raw_col          : name of the raw defensive metric column (e.g. "pm60", "xGA60")
     off_col          : name of the individual offensive rate column (e.g. "o_xG60")
     team_col         : name of the team column (e.g. "Team", "team")
-    defense_weight   : scaling factor applied to the adjusted metric
-    sign             : +1 for pm60 (higher = better defense), -1 for FA60 (fewer = better)
+    defense_weight   : scaling factor applied to the adjusted metric.
+                       Negative for metrics where lower = better (xGA60, FA60);
+                       positive for metrics where higher = better (pm60).
     team_adjust      : if True (default), subtract each team's TOI-weighted mean residual
                        before league centering (Step 2).
     extra_covariates : additional column names to include in the OLS fit alongside
@@ -113,7 +115,7 @@ def compute_defensive_value60(
     )
     df["_def_adj"] = df["_def_resid"] - league_resid
 
-    # Step 4: Scale (sign converts FA60 direction: fewer shots = positive)
-    df["d_value60"] = sign * df["_def_adj"] * defense_weight
+    # Step 4: Scale (negative weight flips direction for metrics where lower = better)
+    df["d_value60"] = df["_def_adj"] * defense_weight
 
     return df

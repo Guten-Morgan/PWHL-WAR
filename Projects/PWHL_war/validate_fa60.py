@@ -41,7 +41,7 @@ RAW       = BASE / "pwhl_war/data/raw"
 SEASONS     = ["2023-24", "2024-25", "2025-26"]
 MIN_TOI     = {"2023-24": 50,  "2024-25": 50,  "2025-26": 25}
 DISPLAY_TOI = {"2023-24": 100, "2024-25": 100, "2025-26": 50}
-DEF_W       = 0.10
+DEF_W       = -0.10
 
 SEP  = "=" * 72
 SEP2 = "-" * 60
@@ -268,7 +268,7 @@ print(f"  PART 1b: defense_weight sweep vs Points  (xGA60 + is_D only)")
 print(SEP)
 
 valid_seasons = [s for s in SEASONS if not standings[s].empty]
-sweep_weights = np.round(np.arange(0.10, 2.51, 0.10), 2)
+sweep_weights = np.round(np.arange(-2.0, 2.05, 0.10), 2)
 sweep_results = []
 
 for w in sweep_weights:

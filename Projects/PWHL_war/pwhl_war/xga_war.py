@@ -212,7 +212,7 @@ class XGAWar:
         self,
         min_toi_min:     float = DEFAULT_MIN_TOI,
         replacement_pct: float = DEFAULT_REPLACEMENT,
-        defense_weight:  float = 0.79,
+        defense_weight:  float = -0.79,
         block_weight:    float = 0.04,
         goals_per_win:   float | None = None,
         team_adjust:     bool  = False,
@@ -273,7 +273,7 @@ class XGAWar:
 
         df = stats_utils.compute_defensive_value60(
             df, qual_mask, "FA60", "ixG60", "team", self.defense_weight,
-            sign=-1, team_adjust=self.team_adjust,
+            team_adjust=self.team_adjust,
         )
         # Preserve legacy column names for downstream consumers
         df["FA60_resid"] = df["_def_resid"]
