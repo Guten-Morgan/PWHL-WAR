@@ -526,15 +526,19 @@ class XGAWar:
                         for s in summ.get("visitingTeam", {}).get("skaters", [])
                     }
                     gc_lower = game_coord["player"].str.lower().str.strip()
+                    # Filter to even-strength only (exclude PP/SH/EN)
+                    ev_mask = game_coord["strength"] == "EV"
+                    game_coord_ev = game_coord[ev_mask]
+                    gc_lower_ev = gc_lower[ev_mask]
                     # Shots by away team → home team's xGA (key = away_tid to mirror FA logic)
                     if away_tid:
                         team_xGA_for[away_tid] = float(
-                            game_coord[gc_lower.isin(away_names)]["xG"].sum()
+                            game_coord_ev[gc_lower_ev.isin(away_names)]["xG"].sum()
                         )
                     # Shots by home team → away team's xGA (key = home_tid)
                     if home_tid:
                         team_xGA_for[home_tid] = float(
-                            game_coord[gc_lower.isin(home_names)]["xG"].sum()
+                            game_coord_ev[gc_lower_ev.isin(home_names)]["xG"].sum()
                         )
 
             home_xGA = team_xGA_for.get(away_tid, 0.0)   # xGA for home team
