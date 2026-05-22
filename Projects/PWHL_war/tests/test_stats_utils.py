@@ -36,7 +36,7 @@ def test_returns_d_value60_column(fixture_df):
     result = compute_defensive_value60(
         fixture_df, qual_mask,
         raw_col="pm60", off_col="o_xG60",
-        team_col="Team", defense_weight=0.36, sign=1,
+        team_col="Team", defense_weight=0.36,
     )
     assert "d_value60" in result.columns
 
@@ -47,7 +47,7 @@ def test_d_value60_is_league_mean_zero(fixture_df):
     result = compute_defensive_value60(
         fixture_df, qual_mask,
         raw_col="pm60", off_col="o_xG60",
-        team_col="Team", defense_weight=0.36, sign=1,
+        team_col="Team", defense_weight=0.36,
     )
     qual = result[qual_mask]
     w_mean = np.average(qual["d_value60"], weights=qual["toi_min"])
@@ -55,17 +55,17 @@ def test_d_value60_is_league_mean_zero(fixture_df):
 
 
 def test_sign_inverts_direction(fixture_df):
-    """sign=-1 should flip the sign of d_value60 relative to sign=+1."""
+    """Negative defense_weight should flip the sign of d_value60."""
     qual_mask = fixture_df["toi_min"] >= 50.0
     res_pos = compute_defensive_value60(
         fixture_df, qual_mask,
         raw_col="pm60", off_col="o_xG60",
-        team_col="Team", defense_weight=0.36, sign=1,
+        team_col="Team", defense_weight=0.36,
     )
     res_neg = compute_defensive_value60(
         fixture_df, qual_mask,
         raw_col="pm60", off_col="o_xG60",
-        team_col="Team", defense_weight=0.36, sign=-1,
+        team_col="Team", defense_weight=-0.36,
     )
     np.testing.assert_array_almost_equal(
         res_pos["d_value60"].values,
@@ -81,7 +81,7 @@ def test_does_not_mutate_input(fixture_df):
     compute_defensive_value60(
         fixture_df, qual_mask,
         raw_col="pm60", off_col="o_xG60",
-        team_col="Team", defense_weight=0.36, sign=1,
+        team_col="Team", defense_weight=0.36,
     )
     pd.testing.assert_series_equal(fixture_df["pm60"], original_pm60)
 
@@ -114,7 +114,7 @@ def test_team_centering_zeros_toi_weighted_team_sum(three_team_df):
     result = compute_defensive_value60(
         three_team_df, qual_mask,
         raw_col="pm60", off_col="o_xG60",
-        team_col="Team", defense_weight=0.36, sign=1,
+        team_col="Team", defense_weight=0.36,
         team_adjust=True,
     )
     for team in ["A", "B", "C"]:
@@ -134,7 +134,7 @@ def test_no_team_centering_preserves_between_team_signal(three_team_df):
     result = compute_defensive_value60(
         three_team_df, qual_mask,
         raw_col="pm60", off_col="o_xG60",
-        team_col="Team", defense_weight=0.36, sign=1,
+        team_col="Team", defense_weight=0.36,
         team_adjust=False,
     )
     team_means = result.groupby("Team")["d_value60"].mean()
