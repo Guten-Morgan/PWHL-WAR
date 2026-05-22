@@ -11,7 +11,7 @@ Variants (is_D is ALWAYS included as an OLS covariate in the FA60 path):
 
 defense_weight=1.40 held fixed across all variants (Exp-4 tuned value).
 
-Run: py -3 Projects/PWHL_war/compare_dwar_variants.py
+Run: py -3 Projects/PWHL_war/tests/validation/compare_dwar_variants.py
 """
 
 import sys
@@ -23,7 +23,7 @@ import numpy as np
 from scipy import stats
 
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from pwhl_war.box_war      import XGWar
 from pwhl_war.csv_loader   import PWHLCsvLoader

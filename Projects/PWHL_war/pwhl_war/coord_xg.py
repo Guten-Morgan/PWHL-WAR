@@ -3,15 +3,18 @@ coord_xg.py
 -----------
 PWHL-native coordinate-based expected goals (xG) model.
 
-Uses logistic regression on shot distance, angle, and power-play flag
-to produce a PWHL-calibrated per-shot xG probability, independent of
-the hockey-statistics.com black-box xG algorithm.
+Uses logistic regression on shot coordinates to produce a PWHL-calibrated
+per-shot xG probability, independent of the hockey-statistics.com black-box
+xG algorithm.
 
-Features
---------
-  dist        : sqrt(x^2 + y^2)   — Euclidean distance to net
-  angle       : arctan2(|y|, x)   — symmetric shot angle (radians)
-  strength_pp : 1 if Strength == "PP", else 0
+Features (V2)
+-------------
+  log_dist          : log1p(sqrt((x - 89)^2 + y^2)) — log distance to net
+  angle             : arctan2(|y|, max(89 - x, 0.01)) — shot angle from net
+  strength_pp       : 1 if Strength == "PP", else 0
+  log_dist × angle  : interaction term
+
+NET_X = 89.0 (attacking net x-coordinate in the PWHL PBP coordinate system).
 
 Target
 ------
@@ -19,8 +22,8 @@ Target
 
 Validation
 ----------
-  Brier score on hold-out data should be < 0.25 (random prediction = 0.25
-  for typical ~10% scoring rate; logistic regression should beat that).
+  Brier score on hold-out data: ~0.0755 (V2) vs ~0.0783 naive baseline.
+  Train on 2023-24 + 2024-25; evaluate on 2025-26.
 """
 
 from __future__ import annotations
@@ -44,6 +47,8 @@ class CoordXGModel:
         Inverse of regularization strength (default 1.0 = no regularization).
     """
 
+    NET_X: float = 89.0  # attacking net x-coordinate in the PWHL PBP system
+
     def __init__(self, C: float = 1.0):
         self.C = C
         self._model: LogisticRegression | None = None
@@ -53,18 +58,20 @@ class CoordXGModel:
     # Feature engineering
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _features(df: pd.DataFrame) -> np.ndarray:
+    @classmethod
+    def _features(cls, df: pd.DataFrame) -> np.ndarray:
         """
-        Build the feature matrix from a shot DataFrame.
+        Build the V2 feature matrix from a shot DataFrame.
 
         Expected columns: x, y, strength
+        Returns: [log_dist, angle, is_pp, log_dist * angle]
         """
         x = pd.to_numeric(df["x"], errors="coerce").fillna(0.0).values
         y = pd.to_numeric(df["y"], errors="coerce").fillna(0.0).values
 
-        dist  = np.sqrt(x ** 2 + y ** 2)
-        angle = np.arctan2(np.abs(y), np.maximum(x, 0.01))  # avoid arctan2(0,0)
+        dist     = np.sqrt((x - cls.NET_X) ** 2 + y ** 2)
+        log_dist = np.log1p(dist)
+        angle    = np.arctan2(np.abs(y), np.maximum(cls.NET_X - x, 0.01))
 
         pp_flag = (df.get("strength", pd.Series(["EV"] * len(df)))
                    .str.upper()
@@ -72,7 +79,7 @@ class CoordXGModel:
                    .astype(float)
                    .values)
 
-        return np.column_stack([dist, angle, pp_flag])
+        return np.column_stack([log_dist, angle, pp_flag, log_dist * angle])
 
     # ------------------------------------------------------------------
     # Public API

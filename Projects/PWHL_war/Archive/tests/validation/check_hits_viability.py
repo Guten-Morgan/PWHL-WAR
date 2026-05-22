@@ -9,7 +9,7 @@ Decision thresholds:
   - YtY Spearman r(2023-24, 2024-25) >= 0.30 among shared qualified players
   - No team shows > 20% home vs away hits disparity
 
-Run: py -3 Projects/PWHL_war/check_hits_viability.py
+Run: py -3 Projects/PWHL_war/tests/validation/check_hits_viability.py
 
 # VERDICT: TBD after running
 """
@@ -23,7 +23,7 @@ import pandas as pd
 from pathlib import Path
 from scipy import stats
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from pwhl_war.csv_loader import PWHLCsvLoader
 

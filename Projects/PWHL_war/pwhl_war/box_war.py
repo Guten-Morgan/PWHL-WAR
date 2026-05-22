@@ -166,6 +166,7 @@ class XGWar:
         pbp_df:       pd.DataFrame | None = None,
         fa_df:        pd.DataFrame | None = None,
         ozs_df:       pd.DataFrame | None = None,
+        train_pbp_df: pd.DataFrame | None = None,
     ) -> "XGWar":
         """
         Parameters
@@ -192,6 +193,12 @@ class XGWar:
                        (alongside o_xG60), reducing the oWAR/dWAR correlation
                        caused by offensive-zone deployment.  Players not matched
                        in ozs_df receive the league-mean ozs_pct.
+        train_pbp_df : Optional PBP DataFrame used exclusively for training the
+                       CoordXGModel.  When provided, the model is fit on this data
+                       and applied to pbp_df (out-of-sample prediction).  When
+                       None, the model trains and applies on the same pbp_df.
+                       Pass historical seasons here when pbp_df is the current
+                       season (e.g. train on 2023-24 + 2024-25, apply to 2025-26).
         """
         df = self._aggregate(game_data_df)
 
@@ -202,9 +209,16 @@ class XGWar:
         # --- Offensive xG per 60 ---
         df["total_ixG"] = df["EV_ixG"] + df["PP_ixG"] + df["SH_ixG"]
 
-        # If PBP data is provided, replace CSV ixG with PWHL-native coord xG
+        # If PBP data is provided, replace CSV ixG with PWHL-native coord xG.
+        # Train on train_pbp_df (historical seasons) when available for
+        # out-of-sample prediction; fall back to training on pbp_df itself.
         if pbp_df is not None and not pbp_df.empty:
-            coord_model  = CoordXGModel().train(pbp_df)
+            _train_data = (
+                train_pbp_df
+                if (train_pbp_df is not None and not train_pbp_df.empty)
+                else pbp_df
+            )
+            coord_model  = CoordXGModel().train(_train_data)
             coord_season = coord_model.player_xg_season(pbp_df)
             # Aggregate by player (in case pbp_df spans multiple seasons)
             coord_season["_name_key"] = (

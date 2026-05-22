@@ -11,7 +11,7 @@ Tests:
      - 2023-24 → 2024-25  and  2024-25 → 2025-26
      - WAR, war60, oWAR, dWAR, o_xG60, d_value60
 
-Run: py -3 Projects/PWHL_war/validate_fa60.py
+Run: py -3 Projects/PWHL_war/tests/validation/validate_fa60.py
 """
 
 import sys
@@ -26,7 +26,7 @@ import statsmodels.api as sm
 from statsmodels.stats.diagnostic import het_breuschpagan
 
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from pwhl_war.box_war      import XGWar
 from pwhl_war.csv_loader   import PWHLCsvLoader
@@ -36,7 +36,7 @@ from pwhl_war.constants    import GPW, TEAM_MAP
 
 logging.basicConfig(level=logging.WARNING)
 
-BASE      = Path(__file__).parent
+BASE      = Path(__file__).parent.parent.parent
 PBP_CACHE = BASE / "pwhl_war/data/raw/pbp_cache"
 RAW       = BASE / "pwhl_war/data/raw"
 

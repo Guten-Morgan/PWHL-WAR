@@ -15,7 +15,7 @@ from pathlib import Path
 from scipy import stats
 from sklearn.linear_model import LinearRegression
 
-sys.path.insert(0, ".")
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from pwhl_war.xga_war    import PWHLApiLoader, _parse_toi, _pid_from_url
 
 # XG_MAP is used only for the FA path's individual player_ixG tracker.

@@ -2,7 +2,7 @@
 Phase 1 Diagnostic Baseline — PWHL dWAR
 Quantifies current oWAR/dWAR correlation and forward-domination before any model changes.
 
-Run: py -3 Projects/PWHL_war/diagnose_dwar.py
+Run: py -3 Projects/PWHL_war/tests/validation/diagnose_dwar.py
 """
 
 import os
@@ -12,7 +12,7 @@ from scipy import stats
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-BASE_DIR = os.path.dirname(__file__)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 SEASON_FILES = {
     "2023-24": os.path.join(BASE_DIR, "pwhl_war_2324.csv"),

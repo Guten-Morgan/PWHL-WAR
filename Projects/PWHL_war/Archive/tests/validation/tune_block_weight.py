@@ -7,7 +7,7 @@ vs goal differential.
 Approach: re-derives d_value60 and dWAR from saved WAR CSVs using the
 saved blocks60_adj column — no need to re-run the full model per weight.
 
-Run: py -3 Projects/PWHL_war/tune_block_weight.py
+Run: py -3 Projects/PWHL_war/tests/validation/tune_block_weight.py
 
 # RESULT: block_weight has negligible impact on r_WAR across 0–0.10 (all values ~0.29, p > 0.20).
 # Best found: 0.015 (r=0.299), statistically indistinguishable from 0.04.
@@ -26,7 +26,7 @@ import pandas as pd
 from pathlib import Path
 from scipy import stats
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from tune_fa_weight import fetch_standings
 from pwhl_war.constants import SEASON_IDS, DEFAULT_REPLACEMENT_PCT

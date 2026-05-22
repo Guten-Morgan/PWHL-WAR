@@ -16,7 +16,7 @@ Approach
 
 Usage
 -----
-  python validate_war.py
+  python tests/validation/validate_war.py
 """
 
 import sys
@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from pwhl_war.constants import HOCKEYTECH_API_KEY, SEASON_IDS, TEAM_MAP, GPW
 
