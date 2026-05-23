@@ -473,11 +473,22 @@ class XGWar:
             "PIM", "plusMinus", "hits",
         ]
         # Only keep columns that actually exist
-        sum_cols  = [c for c in sum_cols  if c in df.columns]
-        group_keys = [c for c in ["PlayerID", "Name", "Team", "position"]
+        sum_cols   = [c for c in sum_cols if c in df.columns]
+        # Group by PlayerID+Team+position only — excludes Name so that
+        # accent-variant spellings of the same player collapse into one row.
+        group_keys = [c for c in ["PlayerID", "Team", "position"]
                       if c in df.columns]
 
         agg = df.groupby(group_keys, as_index=False)[sum_cols].sum()
+
+        # Recover canonical name: the spelling from the game with the most TOI.
+        if "Name" in df.columns:
+            names = (
+                df.sort_values("TOI", ascending=False)
+                  .groupby(group_keys, as_index=False)["Name"]
+                  .first()
+            )
+            agg = agg.merge(names, on=group_keys, how="left")
 
         # Games played = count of non-zero TOI rows per player
         gp = (
