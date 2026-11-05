@@ -9,6 +9,7 @@ Run from Projects/PWHL_war/:
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -93,16 +94,20 @@ def main() -> None:
         lines.append(f"  {sk}: {rows_js}{comma}")
 
     lines.append("};")
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines.append(f'const PWHL_META = {{"updated":"{stamp}"}};')
     js_content = "\n".join(lines) + "\n"
 
     OUT_PATH.write_text(js_content, encoding="utf-8")
     print(f"Written: {OUT_PATH}")
 
-    if PORTFOLIO_PATH.parent.exists():
-        PORTFOLIO_PATH.write_text(js_content, encoding="utf-8")
-        print(f"Copied:  {PORTFOLIO_PATH}")
+    # Optional explicit target (used by CI): export_js.py <path to pwhl-data.js>
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else PORTFOLIO_PATH
+    if target.parent.exists():
+        target.write_text(js_content, encoding="utf-8")
+        print(f"Copied:  {target}")
     else:
-        print(f"Portfolio path not found, skipping copy: {PORTFOLIO_PATH}")
+        print(f"Portfolio path not found, skipping copy: {target}")
 
 
 if __name__ == "__main__":
